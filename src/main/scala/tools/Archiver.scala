@@ -26,17 +26,17 @@ case class Archiver(outputFile: File, sourceDir: File) {
         // Recursively add files to the tar archive
         addFilesToTarGz(tarOs, sourceDir, "")
       catch {
-        case e => e.printStackTrace()
-        case _ => println("OOOps")
+        case e: Throwable => e.printStackTrace()
       }
       finally {
-        if (fos != null) Try(fos).map(_.close)
-        if (bos != null) Try(bos).map(_.close)
-        if (gzos != null) Try(gzos).map(_.close)
-        if (tarOs != null) Try(tarOs).map(_.close)
+        silentClose(fos, bos, gzos, tarOs)
       }
     }
     outputFile
+  }
+
+  private def silentClose(in: AutoCloseable*): Unit = {
+    in.foreach(cl => Try(cl.close()))
   }
 
   private def addFilesToTarGz(tarOs: TarArchiveOutputStream, file: File, parentDir: String): Unit = {
