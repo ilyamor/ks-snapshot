@@ -40,7 +40,8 @@ libraryDependencies ++= Seq(
   "org.apache.logging.log4j" % "log4j-core" % "2.20.0",
   "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0",
   "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % "2.16.1" % Runtime,
-  "com.lmax"                            % "disruptor"                               % "3.4.4"             % Runtime,
+  "com.lmax" % "disruptor" % "3.4.4" % Runtime,
+  "com.github.blemale" %% "scaffeine" % "5.3.0",
   //s3 client
   "com.fasterxml.jackson.core" % "jackson-databind" % "2.16.1")
 //"org.apache.flink" %% "flink-streaming-scala" % "1.20.0")
