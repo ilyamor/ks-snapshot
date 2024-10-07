@@ -1,8 +1,6 @@
 package io.ilyamor.ks.snapshot
 
-import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, StorageUploader, UploadS3ClientForStoreInner}
 import io.ilyamor.ks.utils.EitherOps.EitherOps
-import io.ilyamor.ks.utils.ConcurrentMapOps.ConcurrentMapOps
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -20,16 +18,13 @@ import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesSt
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 
-import java.io.{File, FileOutputStream, InputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
 import java.nio.file.{Files, Path}
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
-import scala.util.Try
 
 case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
-                                                                                     storageClientForStore: StorageUploader,
                                                                                      snapshotStoreListener: SnapshotStoreListener.type,
                                                                                      context: ProcessorContextImpl,
                                                                                      storeName: String,
@@ -56,13 +51,14 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val uploadStoreErrorSensor: Sensor = context.metrics().addRateTotalSensor("s3_state_store", "flush", "upload_state_error", RecordingLevel.INFO, "storeName", storeName)
   private lazy val flushStoreSensor: Sensor = context.metrics().addLatencyRateTotalSensor("s3_state_store", "flush", "all", RecordingLevel.INFO, "storeName", storeName)
 
-  def initFromSnapshot(): Unit = {
+  def initFromSnapshot() = {
     Fetcher.initFromSnapshot()
   }
 
-  def flushSnapshot(): Unit = {
+  def flushSnapshot(snapshotFrequency:Int) = {
     Flusher.flushSnapshot()
-  }
+
+    }
 
   private object Fetcher {
 
@@ -297,6 +293,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
         val sourceTopic = Option(Try(context.topic()).toOption).flatten
         val offset = Option(context.recordCollector())
           .flatMap(collector => Option(collector.offsets().get(tp)))
+        if (offset.isDefined && sourceTopic.isDefined) {
 
           val (tempDir, path) = withLatencyMetrics(pauseRocksDBBackgroundSensor, () => {
             val segments = segmentFetcher(underlyingStore)

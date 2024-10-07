@@ -5,10 +5,10 @@ import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.streams.processor.StateStore
 import org.apache.kafka.streams.scala.kstream.Materialized
 import org.apache.kafka.streams.state._
+import org.apache.kafka.streams.state.internals.RocksDbIndexedTimeOrderedWindowBytesStoreSupplier
 import org.apache.kafka.streams.state.internals.StateStoreToS3.{S3StateStoreConfig, WindowedSnapshotSupplier}
 
 import java.util.Properties
-import org.apache.kafka.streams.state.internals.RocksDbIndexedTimeOrderedWindowBytesStoreSupplier
 
 object implicitConversion {
 
@@ -18,18 +18,22 @@ object implicitConversion {
                                                                  props: Properties
                                                                 ): Materialized[K, V, S] = {
     val materialized = Materialized.`with`[K, V, S](keySerde, valueSerde)
-    if (materialized.dslStoreSuppliers == null)
-      materialized.dslStoreSuppliers = Utils.newInstance(classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers], classOf[DslStoreSuppliers])
-    materialized.dslStoreSuppliers = new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
-    println("replacing windowStoreToSnapshotStore")
+    if (props.getProperty(S3StateStoreConfig.STATE_ENABLED) == "true") {
+      if (materialized.dslStoreSuppliers == null)
+        materialized.dslStoreSuppliers = Utils.newInstance(classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers], classOf[DslStoreSuppliers])
+      materialized.dslStoreSuppliers = new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
+      println("replacing windowStoreToSnapshotStore")
+    }
     materialized
   }
 
   implicit class SnapshotMaterialized[K, V, S <: StateStore](materialized: Materialized[K, V, S]) {
     def withSnapshotEnabled(implicit props: Properties): Materialized[K, V, S] = {
-      if (materialized.dslStoreSuppliers == null)
-        materialized.dslStoreSuppliers = Utils.newInstance(classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers], classOf[DslStoreSuppliers])
-      materialized.dslStoreSuppliers = new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
+      if (props.getProperty(S3StateStoreConfig.STATE_ENABLED) == "true") {
+        if (materialized.dslStoreSuppliers == null)
+          materialized.dslStoreSuppliers = Utils.newInstance(classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers], classOf[DslStoreSuppliers])
+        materialized.dslStoreSuppliers = new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
+      }
       materialized
     }
   }

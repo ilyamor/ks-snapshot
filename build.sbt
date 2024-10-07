@@ -1,3 +1,5 @@
+
+
 ThisBuild / version := "0.1.4"
 
 ThisBuild / scalaVersion := "2.13.14"
@@ -25,7 +27,7 @@ Global / cancelable := true
 // exclude Scala library from assembly
 
 libraryDependencies ++= Seq(
-  "org.apache.kafka" %% "kafka-streams-scala" % "3.8.0" % Provided, // should be provided
+  "org.apache.kafka" %% "kafka-streams-scala" % "3.7.1" % Provided, // should be provided
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
   // Use the "provided" scope instead when the "compile-internal" scope is not supported
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % versions.jsoniterScala,
@@ -45,11 +47,11 @@ libraryDependencies ++= Seq(
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
 
-resolvers ++= Seq(
-  "Private Artifactory SBT resolver" at "https://cgx.jfrog.io/artifactory/virtual.sbt.coralogix.net",
-  "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
-)
-publishMavenStyle := true
-publishTo         := Some(
-  "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
-)
+
+resolvers += "Another maven repo" at "https://maven.pkg.github.com/ilyamor/"
+
+publishConfiguration := publishConfiguration.value.withOverwrite(true)
+ publishLocalConfiguration := publishLocalConfiguration.value.withOverwrite(true)
+
+githubOwner := "ilyamor"
+githubRepository := "ks-snapshot"

@@ -1,21 +1,14 @@
 package org.apache.kafka.streams.state.internals
 
 import io.ilyamor.ks.snapshot.Snapshoter
-import io.ilyamor.ks.snapshot.tools.{StorageUploader, StorageUploaderJava, UploadS3ClientForStore, UploaderUtils}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.config.ConfigDef.{Importance, Type, Validator}
-import org.apache.kafka.common.config.{AbstractConfig, ConfigDef, ConfigException}
-import org.apache.kafka.common.utils.{Bytes, Utils}
 import org.apache.kafka.streams.processor._
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.state.WindowStore
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 import io.ilyamor.ks.utils.EitherOps.EitherOps
-import org.apache.kafka.common.config.ConfigDef.Range.atLeast
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_STORAGE_UPLOADER
 
-import java.io.{File, InputStream}
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.CollectionHasAsScala
@@ -61,14 +54,12 @@ object StateStoreToS3 extends Logging {
       }
 
       override def onBatchRestored(topicPartition: TopicPartition, storeName: String, batchEndOffset: Long, numRestored: Long): Unit = {
-
-        println(Thread.currentThread() + "on ")
       }
 
       override def onRestoreEnd(topicPartition: TopicPartition, storeName: String, totalRestored: Long): Unit = {
         taskStore.put(TppStore(topicPartition, storeName), false)
 
-        println(Thread.currentThread() + "on end")
+        println(Thread.currentThread() + "after restore topic" + topicPartition + " store " + storeName)
 
       }
 
@@ -99,12 +90,12 @@ object StateStoreToS3 extends Logging {
         case RocksDbWindowBytesStoreSupplier.WindowStoreTypes.DEFAULT_WINDOW_STORE =>
           new S3StateSegmentedStateStore[RocksDBSegmentedBytesStore, KeyValueSegment](
             new RocksDBSegmentedBytesStore(name, metricsScope, retentionPeriod, segmentInterval, new WindowKeySchema),
-            retainDuplicates, windowSize, props, { store: RocksDBSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
+            retainDuplicates, windowSize, streamProps, { store: RocksDBSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
           )
         case RocksDbWindowBytesStoreSupplier.WindowStoreTypes.TIMESTAMPED_WINDOW_STORE =>
-          new S3StateSegmentedStateStore[RocksDBTimestampedSegmentedBytesStore, TimestampedSegment](
+          new S3StateSegmentedStateStoreTimeStamped[RocksDBTimestampedSegmentedBytesStore, TimestampedSegment](
             new RocksDBTimestampedSegmentedBytesStore(name, metricsScope, retentionPeriod, segmentInterval, new WindowKeySchema),
-            retainDuplicates, windowSize, props, { store: RocksDBTimestampedSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
+            retainDuplicates, windowSize, streamProps, { store: RocksDBTimestampedSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
           )
       }
     }
@@ -128,9 +119,55 @@ object StateStoreToS3 extends Logging {
   }
 
   class S3StateSegmentedStateStore[T <: AbstractRocksDBSegmentedBytesStore[S], S <: Segment]
-              (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, props: Properties, segmentFetcher: T => List[RocksDB])
+              (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, config: S3StateStoreConfig, segmentFetcher: T => List[RocksDB])
       extends RocksDBWindowStore(wrapped, retainDuplicates, windowSize) with Logging {
 
+    var snapshotFrequency:Int = _
+    var context: StateStoreContext = _
+    var snapshoter: Snapshoter[S, T] = _
+    val snapshotStoreListener: SnapshotStoreListeners.SnapshotStoreListener.type = SnapshotStoreListeners.SnapshotStoreListener
+
+    override def init(context: StateStoreContext, root: StateStore): Unit = {
+      this.context = context
+      // this.root = root
+
+      this.snapshotFrequency = Option(config.getString(STATE_SNAPSHOT_FREQUENCY)).getOrElse("20").toInt
+      val s3ClientWrapper = UploadS3ClientForStore(
+        config, s"${context.applicationId()}/${context.taskId()}/${name()}"
+      )
+      val underlyingStore = this.wrapped.asInstanceOf[T]
+      this.snapshoter = Snapshoter(
+        snapshotStoreListener = snapshotStoreListener,
+        s3ClientForStore = s3ClientWrapper,
+        context = context.asInstanceOf[ProcessorContextImpl],
+        storeName = name(),
+        underlyingStore = underlyingStore,
+        segmentFetcher = segmentFetcher
+      )
+      snapshoter.initFromSnapshot()
+      Try {
+        super.init(context, root)
+      }.toEither.tapError { e =>
+        logger.error(s"Error while initializing store: ${e.getMessage}")
+      }
+    }
+
+    override def flush(): Unit = {
+      super.flush()
+      snapshoter.flushSnapshot(snapshotFrequency)
+    }
+
+    override def close(): Unit = {
+      super.close()
+    }
+  }
+
+  class S3StateSegmentedStateStoreTimeStamped[T <: AbstractRocksDBSegmentedBytesStore[S], S <: Segment]
+  (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, config: S3StateStoreConfig, segmentFetcher: T => List[RocksDB])
+    extends RocksDBTimestampedWindowStore(wrapped, retainDuplicates, windowSize) with Logging {
+
+    var snapshotFrequency:Int = _
+    var context: StateStoreContext = _
     var snapshoter: Snapshoter[S, T] = _
 
     override def init(context: StateStoreContext, root: StateStore): Unit = {
@@ -177,7 +214,7 @@ object StateStoreToS3 extends Logging {
 
   object S3StateStoreConfig {
 
-    //def STATE_ENABLED = "state.s3.enabled"
+    def STATE_ENABLED = "state.s3.enabled"
     def STATE_BUCKET = "state.s3.bucket.name"
     def STATE_KEY_PREFIX = "state.s3.key.prefix"
     def STATE_REGION = "state.s3.region"
@@ -187,7 +224,7 @@ object StateStoreToS3 extends Logging {
     def STATE_STORAGE_UPLOADER = "state.s3.storage.uploader"
 
     private def CONFIG = new ConfigDef()
-      //.define(STATE_ENABLED, Type.BOOLEAN, false, Importance.MEDIUM, "")
+      .define(STATE_ENABLED, Type.BOOLEAN, false, Importance.MEDIUM, "")
       .define(STATE_BUCKET, Type.STRING, Importance.MEDIUM, "Defines S3 bucket to use to store state store. Required.")
       .define(STATE_KEY_PREFIX, Type.STRING, "", Importance.LOW, "Defines some s3 bucket key prefix to store state store. Optional.")
       .define(STATE_REGION, Type.STRING, Importance.MEDIUM, "Defines s3 region to use where to store state store. Required.")
