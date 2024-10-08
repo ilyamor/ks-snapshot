@@ -3,25 +3,27 @@ package tools
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
-import software.amazon.awssdk.services.s3.model.{CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart, CreateMultipartUploadRequest, CreateMultipartUploadResponse, GetUrlRequest, PutObjectRequest, UploadPartCopyRequest, UploadPartRequest}
+import software.amazon.awssdk.services.s3.model._
 
 import java.io.{File, RandomAccessFile}
 import java.nio.ByteBuffer
 import java.util
 import scala.util.Try
 
-case class S3ClientForStore private (client: S3Client, bucket: String, key: String) {
-  def uploadStateStore(archiveFile: File, checkPoint: File): Long = {
-    val res = for {
+
+case class S3ClientForStore(client: S3Client, bucket: String, key: String) {
+  def uploadStateStore(archiveFile: File, checkPoint: File) = {
+    for {
       f <- uploadArchive(archiveFile)
       u <- uploadCheckpoint(checkPoint)
     } yield (f, u)
 
-    System.currentTimeMillis()
+    Right("")
+//    System.currentTimeMillis()
   }
 
   private def uploadCheckpoint(archiveFile: File): Either[Throwable, String] = {
-    null
+    Right("checkpoint")
   }
 
   private def uploadArchive(archiveFile: File): Either[Throwable, String] = {
@@ -69,8 +71,9 @@ case class S3ClientForStore private (client: S3Client, bucket: String, key: Stri
 }
 
 object S3ClientForStore {
+
   def apply(bucket: String, prefix: String, region: Region, storeName: String, partition: Int, offset: Long): S3ClientForStore = {
     val client: S3Client = S3Client.builder.region(region).build
-    new S3ClientForStore(client, bucket, s"$prefix/$storeName/$partition/$offset")
+    S3ClientForStore(client, bucket, s"$prefix/$storeName/$partition/$offset")
   }
 }

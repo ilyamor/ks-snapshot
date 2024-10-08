@@ -8,7 +8,7 @@ import java.io.{BufferedOutputStream, File, FileInputStream, FileOutputStream}
 import java.nio.file.Files
 import scala.util.Try
 
-case class Archiver private (outputFile: File, sourceDir: File) {
+case class Archiver(outputFile: File, sourceDir: File) {
 
   def archive(): Either[Throwable, File] = {
     Try(start()).toEither
