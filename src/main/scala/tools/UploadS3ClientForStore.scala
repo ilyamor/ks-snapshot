@@ -84,7 +84,7 @@ object UploadS3ClientForStore {
       })
       .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))*/
       .region(region).build
-    new UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
+    UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
   }
 
   // when we want custom configured S3Client
