@@ -1,18 +1,13 @@
 package tools
 
-import software.amazon.awssdk.auth.credentials.{AwsBasicCredentials, AwsCredentials, AwsCredentialsProvider}
 import software.amazon.awssdk.core.sync.RequestBody
-import software.amazon.awssdk.endpoints.{Endpoint, EndpointProvider}
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
-import software.amazon.awssdk.services.s3.endpoints.{S3EndpointParams, S3EndpointProvider}
-import software.amazon.awssdk.services.s3.model.{CompleteMultipartUploadRequest, CompletedMultipartUpload, CompletedPart, CreateMultipartUploadRequest, CreateMultipartUploadResponse, GetUrlRequest, PutObjectRequest, UploadPartCopyRequest, UploadPartRequest}
+import software.amazon.awssdk.services.s3.model._
 
 import java.io.{File, RandomAccessFile}
-import java.net.URI
 import java.nio.ByteBuffer
 import java.util
-import java.util.concurrent.CompletableFuture
 import scala.util.Try
 
 case class UploadS3ClientForStore private(client: S3Client, bucket: String, basePathS3: String) {
@@ -41,8 +36,8 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
       val uploadId = createResponse.uploadId
       val completedParts = prepareMultipart(archiveFile, uploadId)
 
-      val completedUpload = CompletedMultipartUpload.builder.parts(completedParts).build
-      val completeRequest = CompleteMultipartUploadRequest.builder.bucket(bucket).key(archiveKey).uploadId(uploadId).multipartUpload(completedUpload).build
+//      val completedUpload = CompletedMultipartUpload.builder.parts(completedParts).build
+      val completeRequest = CompleteMultipartUploadRequest.builder.bucket(bucket).key(archiveKey).uploadId(uploadId).multipartUpload((t:CompletedMultipartUpload.Builder) => t.parts(completedParts) ).build
       client.completeMultipartUpload(completeRequest)
 
       client.utilities().getUrl(GetUrlRequest.builder()
