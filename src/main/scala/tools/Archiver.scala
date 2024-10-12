@@ -4,18 +4,14 @@ import org.apache.commons.compress.archivers.tar.{TarArchiveEntry, TarArchiveOut
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.apache.commons.io.IOUtils
 
-import java.io.{BufferedOutputStream, File, FileInputStream, FileOutputStream}
+import java.io.{BufferedOutputStream, File, FileInputStream, FileOutputStream, OutputStream}
 import java.nio.file.Files
 import scala.util.Try
 
 case class Archiver(outputFile: File, sourceDir: File) {
 
   def archive(): Either[Throwable, File] = {
-    Try(start()).toEither
-  }
-
-  private def start(): File = {
-    try {
+    Try {
       outputFile.getParentFile.mkdirs()
       outputFile.createNewFile()
       val fos = new FileOutputStream(outputFile)
@@ -25,18 +21,23 @@ case class Archiver(outputFile: File, sourceDir: File) {
       try
         // Recursively add files to the tar archive
         addFilesToTarGz(tarOs, sourceDir, "")
-      catch {
-        case e: Throwable => e.printStackTrace()
-      }
       finally {
         silentClose(fos, bos, gzos, tarOs)
       }
-    }
-    outputFile
+    }.toEither.flatMap(_ => {
+      val hasBytes = new FileInputStream(outputFile).available()
+      if (hasBytes > 0)
+        Right(outputFile)
+      else
+        Left(new Exception("Empty state"))
+    })
   }
 
-  private def silentClose(in: AutoCloseable*): Unit = {
-    in.foreach(cl => Try(cl.close()))
+  private def silentClose(in: OutputStream*): Unit = {
+    in.foreach(cl => Try({
+      cl.flush();
+      cl.close();
+    }))
   }
 
   private def addFilesToTarGz(tarOs: TarArchiveOutputStream, file: File, parentDir: String): Unit = {
@@ -44,12 +45,14 @@ case class Archiver(outputFile: File, sourceDir: File) {
     if (file.isFile) {
       val fis = new FileInputStream(file)
       val tarEntry = new TarArchiveEntry(file, entryName)
-      tarOs.putArchiveEntry(tarEntry)
+      var readBytes = 0;
       try {
         println(s"Archiving file ${file.getAbsolutePath}")
-        IOUtils.copy(fis, tarOs)
+        readBytes = IOUtils.copy(fis, tarOs)
       } finally {
         fis.close()
+        if (readBytes > 0)
+          tarOs.putArchiveEntry(tarEntry)
         tarOs.closeArchiveEntry
       }
     } else if (file.isDirectory) {
