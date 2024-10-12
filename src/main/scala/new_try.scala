@@ -10,18 +10,16 @@ import org.apache.kafka.common.serialization.Serdes.StringSerde
 import org.apache.kafka.common.serialization.{Serde, Serdes}
 import org.apache.kafka.common.utils.{SystemTime, Time}
 import org.apache.kafka.streams.kstream.{Consumed, TimeWindows}
-import org.apache.kafka.streams.processor.api.Processor
 import org.apache.kafka.streams.processor._
 import org.apache.kafka.streams.scala.ImplicitConversions._
+import org.apache.kafka.streams.scala.StreamsBuilder
 import org.apache.kafka.streams.scala.kstream.Materialized
 import org.apache.kafka.streams.scala.serialization.Serdes._
-import org.apache.kafka.streams.scala.{ByteArrayWindowStore, StreamsBuilder}
 import org.apache.kafka.streams.state.internals.CoralogixStore.WindowsCoralogixSupplier
 import org.apache.kafka.streams.state.internals._
-import org.apache.kafka.streams.state.{KeyValueIterator, KeyValueStore, RocksDBConfigSetter}
+import org.apache.kafka.streams.state.{KeyValueIterator, KeyValueStore}
 import org.apache.kafka.streams.{KafkaStreams, KeyValue, StreamsConfig}
 import org.apache.logging.log4j.scala.Logging
-import org.rocksdb.{BlockBasedTableConfig, Options}
 
 import java.time.Duration
 import java.util
@@ -214,7 +212,7 @@ object GlobalStoresExample extends Logging {
 
     streamsConfiguration.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
     streamsConfiguration.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 18000)
-    streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG,Random.alphanumeric.take(10).mkString)
+    streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, Random.alphanumeric.take(10).mkString)
     //    streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, stateDir)
     streamsConfiguration.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 0)
     streamsConfiguration.put(StreamsConfig.STATESTORE_CACHE_MAX_BYTES_CONFIG, 0)
@@ -232,63 +230,22 @@ object GlobalStoresExample extends Logging {
     // create and configure the SpecificAvroSerdes required in this example
     val snapshotStoreListener = new SnapshotStoreListener(null, "bucketName")
 
+    val met = (Materialized.as(new WindowsCoralogixSupplier("store1", 1000000l, 1000000l, 1000000l, true, false, snapshotStoreListener))(Serdes.String(), Serdes.String()))
     val builder = new StreamsBuilder
     // Get the stream of orders
     val ordersStream = builder.stream(ORDER_TOPIC)(Consumed.`with`(Serdes.String(), Serdes.String())).peek((k, v) => {
-    }).groupByKey
-
-    val met: Materialized[String, String, ByteArrayWindowStore] = (Materialized.as(new WindowsCoralogixSupplier("store1", 1000000l, 1000000l, 1000000l, true, false, snapshotStoreListener))(Serdes.String(), Serdes.String()))
-
-    val g = ordersStream
+      }).groupByKey
       .windowedBy(TimeWindows.ofSizeWithNoGrace(Duration.ofSeconds(1000000)))
       .aggregate("") { (k, v, agg) => v + agg }(met).toStream.foreach((k, v) => {
-        //        println(k + " " + v)
       })
 
-    // Add a global store for customers. The data from this global store
-    // will be fully replicated on each instance of this application.
-    //    builder.addGlobalStore(storeBuilder1, CUSTOMER_TOPIC, Consumed.`with`(Serdes.String, Serdes.String), () => new GlobalStoresExample.GlobalStoreUpdater[String, String](CUSTOMER_STORE))
-    //    // Add a global store for products. The data from this global store
-    //    // will be fully replicated on each instance of this application.
-    //    builder.addGlobalStore(storeBuilder2, PRODUCT_TOPIC, Consumed.`with`(Serdes.String, Serdes.String), () => new GlobalStoresExample.GlobalStoreUpdater[String, String](PRODUCT_STORE))
-
-    //    builder.addGlobalStore(Stores.keyValueStoreBuilder(Stores.persistentKeyValueStore(CUSTOMER_STORE), Serdes.String, Serdes.String()), CUSTOMER_TOPIC, Consumed.`with`(Serdes.String, Serdes.String), () => new GlobalStoresExample.GlobalStoreUpdater[String, String](CUSTOMER_STORE))
-    //    builder.addGlobalStore(Stores.keyValueStoreBuilder(Stores.persistentKeyValueStore(PRODUCT_STORE), Serdes.String, Serdes.String()), PRODUCT_TOPIC, Consumed.`with`(Serdes.String, Serdes.String), () => new GlobalStoresExample.GlobalStoreUpdater[String, String](CUSTOMER_STORE))
-
-    // We transform each order with a value transformer which will access each
-    // global store to retrieve customer and product linked to the order.
     val start = new KafkaStreams(builder.build, streamsConfiguration)
     start.setGlobalStateRestoreListener(snapshotStoreListener)
     start.setStandbyUpdateListener(snapshotStoreListener)
     start.setStateListener((newState, oldState) => {
       logger.info("changing state ilya " + oldState + newState.name())
     })
-    //    start.streamsMetadataForStore("store1").asScala.map(_.)
     builder.build()
-    //    start.setStateListener()
-
-    class BoundedMemoryRocksDBConfig extends RocksDBConfigSetter {
-      override def setConfig(
-                              storeName: String,
-                              options: Options,
-                              configs: util.Map[String, AnyRef]
-                            ): Unit = {
-
-        val tableConfig = options.tableFormatConfig.asInstanceOf[BlockBasedTableConfig]
-
-        options
-          .setMaxWriteBufferNumber(100)
-          .setLevel0FileNumCompactionTrigger(1000)
-          .setWriteBufferSize(1000)
-          .setDbWriteBufferSize(1000000000)
-          //          .setTableFormatConfig(tableConfig)
-          //          .setMaxWriteBufferNumberToMaintain(config.maxWriteBufferNumberToMaintain)
-          .setMaxBackgroundJobs(10)
-        ()
-      }
-
-      override def close(storeName: String, options: Options): Unit = ()
-    }
 
     start
 
@@ -297,32 +254,10 @@ object GlobalStoresExample extends Logging {
 
 }
 
-
-// Processor that keeps the global store updated.
-class GlobalStoreUpdater[K, V](private val storeName: String) extends Processor[K, V, Void, Void] {
-  private var store: KeyValueStore[K, V] = null
-
-  override def init(context: api.ProcessorContext[Void, Void]): Unit = {
-
-    store = context.getStateStore(storeName).asInstanceOf[KeyValueStore[K, V]]
-  }
-
-  override def close(): Unit = {
-
-    // No-op
-  }
-
-  override def process(record: api.Record[K, V]): Unit = {
-    println(Thread.currentThread() + "restoring")
-    store.put(record.key, record.value)
-
-  }
-}
-
 object SnapshotStoreListener {
   case class TppStore(topicPartition: TopicPartition, storeName: String)
 
-  case class SnapshotStoreListener(s3Client: Unit, bucketName: String) extends StateRestoreListener with StandbyUpdateListener{
+  case class SnapshotStoreListener(s3Client: Unit, bucketName: String) extends StateRestoreListener with StandbyUpdateListener {
 
     override def onUpdateStart(topicPartition: TopicPartition, storeName: String, startingOffset: Long): Unit = {
       onRestoreStart(topicPartition, storeName, startingOffset, 0)
@@ -333,7 +268,6 @@ object SnapshotStoreListener {
     }
 
     override def onUpdateSuspended(topicPartition: TopicPartition, storeName: String, storeOffset: Long, currentEndOffset: Long, reason: StandbyUpdateListener.SuspendReason): Unit = {
-
       onRestoreSuspended(topicPartition, storeName, currentEndOffset)
     }
 
