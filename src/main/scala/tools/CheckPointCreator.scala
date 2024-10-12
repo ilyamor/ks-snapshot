@@ -6,7 +6,7 @@ import scala.util.Try
 
 case class CheckPointCreator private (pathToVersion: Path, offset: Long) {
 
-  def create(pathToVersion: Path, offset: Long): Either[Throwable, File] = {
+  def create(): Either[Throwable, File] = {
     Try {
       val writer = Files.newBufferedWriter(pathToVersion, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
       writer.append(s"$offset\n").close()
