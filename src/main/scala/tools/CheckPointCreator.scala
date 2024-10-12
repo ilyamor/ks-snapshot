@@ -5,14 +5,13 @@ import java.nio.file.{Files, Path, StandardOpenOption}
 import scala.util.Try
 
 case class CheckPointCreator private (pathToVersion: Path, offset: Long) {
-  def create(): Either[Throwable, File] = {
-    Try(createVersion(pathToVersion, offset)).toEither
-  }
 
-  private def createVersion(pathToVersion: Path, offset: Long): File = {
-    val writer = Files.newBufferedWriter(pathToVersion, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
-    writer.append(s"$offset\n").close()
-    pathToVersion.toFile
+  def create(pathToVersion: Path, offset: Long): Either[Throwable, File] = {
+    Try {
+      val writer = Files.newBufferedWriter(pathToVersion, StandardOpenOption.CREATE, StandardOpenOption.APPEND)
+      writer.append(s"$offset\n").close()
+      pathToVersion.toFile
+    }.toEither
   }
 }
 
