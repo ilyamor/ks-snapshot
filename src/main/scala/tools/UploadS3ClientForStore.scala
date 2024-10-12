@@ -36,8 +36,8 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
       val uploadId = createResponse.uploadId
       val completedParts = prepareMultipart(archiveFile, uploadId)
 
-//      val completedUpload = CompletedMultipartUpload.builder.parts(completedParts).build
-      val completeRequest = CompleteMultipartUploadRequest.builder.bucket(bucket).key(archiveKey).uploadId(uploadId).multipartUpload((t:CompletedMultipartUpload.Builder) => t.parts(completedParts) ).build
+      val completedUpload = CompletedMultipartUpload.builder.parts(completedParts).build
+      val completeRequest = CompleteMultipartUploadRequest.builder.bucket(bucket).key(archiveKey).uploadId(uploadId).multipartUpload(completedUpload).build
       client.completeMultipartUpload(completeRequest)
 
       client.utilities().getUrl(GetUrlRequest.builder()
