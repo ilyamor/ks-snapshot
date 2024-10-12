@@ -77,7 +77,7 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
 }
 
 object UploadS3ClientForStore {
-  def apply(bucket: String, prefix: String, region: Region, storeName: String, partition: Int): UploadS3ClientForStore = {
+  def apply(bucket: String, prefix: String, region: Region, storeName: String): UploadS3ClientForStore = {
     val client: S3Client = S3Client.builder
       /*.endpointOverride(new URI("http://localhost:9000"))
       .endpointProvider(new S3EndpointProvider {
@@ -89,21 +89,19 @@ object UploadS3ClientForStore {
       })
       .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))*/
       .region(region).build
-    new UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName, partition))
+    new UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
   }
 
   // when we want custom configured S3Client
-  def apply(client: S3Client, bucket: String, prefix: String, storeName: String, partition: Int): UploadS3ClientForStore = {
-    new UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName, partition))
+  def apply(client: S3Client, bucket: String, prefix: String, storeName: String): UploadS3ClientForStore = {
+    new UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
   }
 
   private def buildPath(parts: Any*): String = {
     parts
       .map(an => an.toString)
+      .filter(s => !s.isBlank)
       .map(str => removeEndSlash(str))
-      // we want to avoid paths with //, so if we have empty string, let's replace with '_',
-      // so path we'll look like 'value1/value2/_/value4'
-      .map(str => if (str.isBlank) "_" else str)
       .mkString("/")
   }
 
