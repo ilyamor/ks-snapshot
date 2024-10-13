@@ -281,10 +281,10 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
               .toMap.map(tp => (new TopicPartition(sourceTopic, tp._1), tp._2))
 
             val files = for {
-              archivedFile <- Archiver(tempDir.toFile, offset, new File(storePath)).archive()
-              checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset).write()
               positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
-              uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile, positionFile)
+              archivedFile <- Archiver(tempDir.toFile, offset, new File(storePath), positionFile).archive()
+              checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset).write()
+              uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
             } yield uploadResultQuarto
             files
               .tap(
