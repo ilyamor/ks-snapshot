@@ -4,7 +4,7 @@ import org.apache.commons.compress.archivers.tar.{TarArchiveEntry, TarArchiveOut
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.apache.commons.io.IOUtils
 
-import java.io.{BufferedOutputStream, File, FileInputStream, FileOutputStream, OutputStream}
+import java.io._
 import java.nio.file.Files
 import scala.util.Try
 
@@ -29,7 +29,7 @@ case class Archiver(outputFile: File, sourceDir: File) {
       if (hasBytes > 0)
         Right(outputFile)
       else
-        Left(new Exception("Empty state"))
+        Left(new Exception("Empty state"+ outputFile.getAbsolutePath))
     })
   }
 
@@ -45,15 +45,13 @@ case class Archiver(outputFile: File, sourceDir: File) {
     if (file.isFile) {
       val fis = new FileInputStream(file)
       val tarEntry = new TarArchiveEntry(file, entryName)
-      var readBytes = 0;
+      tarOs.putArchiveEntry(tarEntry)
       try {
         println(s"Archiving file ${file.getAbsolutePath}")
-        readBytes = IOUtils.copy(fis, tarOs)
+        IOUtils.copy(fis, tarOs)
       } finally {
         fis.close()
-        if (readBytes > 0)
-          tarOs.putArchiveEntry(tarEntry)
-        tarOs.closeArchiveEntry
+        tarOs.closeArchiveEntry()
       }
     } else if (file.isDirectory) {
       println(s"Starting dir ${file.getAbsolutePath}/")
