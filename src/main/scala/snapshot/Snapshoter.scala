@@ -32,6 +32,7 @@ class S3ClientWrapper(bucketName: String) {
 
   val CHECKPOINT = ".checkpoint"
   val state = "state.tar.gz"
+  val suffix = "tar.gz"
 
 
   def getCheckpointFile(context: StateStoreContext, partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
@@ -52,14 +53,12 @@ class S3ClientWrapper(bucketName: String) {
 
   }
 
-  def getStateStores(partition: String, storeName: String, applicationId: String): Either[Throwable, ResponseInputStream[GetObjectResponse]] = {
+  def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, ResponseInputStream[GetObjectResponse]] = {
     val rootPath = s"$applicationId/$partition/$storeName"
-    //      val version = getLatestVersion(partition, applicationId)
-    val stateFileCompressed = s"$rootPath/$state"
+    val stateFileCompressed = s"$rootPath/$offset.$suffix"
 
     Try {
       s3.getObject(GetObjectRequest.builder().bucket(bucketName).key(stateFileCompressed).build())
-      //check if exists and read
     }.toEither
 
 
@@ -92,32 +91,30 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
     }
 
     private def getSnapshotStore(context: StateStoreContext) = {
-      val localCheckPointFile = getLocalCheckpointFile(context)
-      val remoteCheckPoint = fetchRemoteCheckPointFile(context)
+      val localCheckPointFile = getLocalCheckpointFile(context).toOption
+      val remoteCheckPoint = fetchRemoteCheckPointFile(context).toOption
       if (shouldFetchStateStoreFromSnapshot(localCheckPointFile, remoteCheckPoint)) {
-        fetchAndWriteLocally(context) ->
+        fetchAndWriteLocally(context, remoteCheckPoint) ->
           overrideLocalCheckPointFile(context, localCheckPointFile, remoteCheckPoint)
       }
 
     }
 
-    private def overrideLocalCheckPointFile(context: StateStoreContext, localCheckPointFile: Either[IllegalArgumentException, OffsetCheckpoint], remoteCheckPoint: Either[Throwable, OffsetCheckpoint]) = {
+    private def overrideLocalCheckPointFile(context: StateStoreContext, localCheckPointFile: Option[OffsetCheckpoint], remoteCheckPoint: Option[OffsetCheckpoint]) = {
       val res = (localCheckPointFile, remoteCheckPoint) match {
-        case (Right(local), Right(remote)) =>
+        case (Some(local), Some(remote)) =>
           logger.info("Overriding local checkpoint file with existing one")
-
           val localOffsets = local.read().asScala
           val remoteOffsets = remote.read().asScala
           Right((localOffsets ++ remoteOffsets).asJava)
-        case (Left(_), Right(remote)) =>
-          logger.info("Overriding local checkpoint file doesn't exist with existing one,using remote")
 
+        case (None, Some(remote)) =>
+          logger.info("Overriding local checkpoint file doesn't exist with existing one,using remote")
           Right(remote.read())
-        case _ => {
+
+        case _ =>
           logger.error("Error while overriding local checkpoint file")
           Left(new IllegalArgumentException("Error while overriding local checkpoint file"))
-
-        }
       }
       res.flatMap { newOffsets =>
 
@@ -131,28 +128,41 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
     }
 
 
-    private def fetchAndWriteLocally(context: StateStoreContext): Either[Throwable, Unit] = {
-      s3ClientWrapper.getStateStores(context.taskId.toString, storeName, context.applicationId())
-        .tapError(e => logger.error(s"Error while fetching remote state store: $e", e))
-        .tapError(e => throw e)
-        .map((response: ResponseInputStream[GetObjectResponse]) => {
-          val destDir = s"${context.stateDir.getAbsolutePath}/${storeName}"
-          extractAndDecompress(destDir, response)
+    private def fetchAndWriteLocally(context: StateStoreContext, remoteCheckPoint: Option[OffsetCheckpoint]): Either[Throwable, Unit] = {
+      remoteCheckPoint match {
+        case Some(localCheckPointFile) =>
+          localCheckPointFile.read().asScala.values.headOption match {
+            case Some(offset) => s3ClientWrapper.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
+              .tapError(e => logger.error(s"Error while fetching remote state store: $e", e))
+              .tapError(e => throw e)
+              .map((response: ResponseInputStream[GetObjectResponse]) => {
+                val destDir = s"${context.stateDir.getAbsolutePath}/${storeName}"
+                extractAndDecompress(destDir, response)
+                ()
+              })
 
-        })
+            case None =>
+              logger.error("remote checkpoint file is offsets is empty")
+              Left(new IllegalArgumentException("remote checkpoint file is offsets is empty"))
+
+          }
+        case None =>
+          logger.error("Local checkpoint file is empty")
+          Left(new IllegalArgumentException("remote-- checkpoint file is empty"))
+      }
     }
 
-    private def shouldFetchStateStoreFromSnapshot(localCheckPointFile: Either[IllegalArgumentException, OffsetCheckpoint], remoteCheckPoint: Either[Throwable, OffsetCheckpoint]) = {
+    private def shouldFetchStateStoreFromSnapshot(localCheckPointFile: Option[OffsetCheckpoint], remoteCheckPoint: Option[OffsetCheckpoint]) = {
       (localCheckPointFile, remoteCheckPoint) match {
-        case (Left(_), _) => {
+        case (None, _) => {
           logger.info("Local checkpoint file not found, fetching remote state store")
           true
         }
-        case (_, Left(_)) => {
+        case (_, None) => {
           logger.info("Remote checkpoint file not found, not fetching remote state store")
           false
         }
-        case (Right(local), Right(remote)) => isOffsetBiggerThanMin(local, remote)
+        case (Some(local), Some(remote)) => isOffsetBiggerThanMin(local, remote)
       }
     }
 
@@ -195,7 +205,6 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
     private def fetchRemoteCheckPointFile(context: StateStoreContext): Either[Throwable, OffsetCheckpoint] = {
       s3ClientWrapper.getCheckpointFile(context, context.taskId.toString, storeName, context.applicationId())
         .tapError(e => logger.error(s"Error while fetching remote checkpoint: $e"))
-        .tapError(e => throw e)
     }
 
     val OFFSETTHRESHOLD: Int = 10000
@@ -252,19 +261,23 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
 
       val tppStore = TppStore(tp, storeName)
       if (!snapshotStoreListener.taskStore.getOrDefault(tppStore, false)
-        && snapshotStoreListener.workingFlush.getOrDefault(tppStore, true)) {
+        && !snapshotStoreListener.workingFlush.getOrDefault(tppStore, false)) {
         if (offset != null) {
           Future {
             val storePath = s"${stateDir.getAbsolutePath}/$storeName"
             val tempDir = Files.createTempDirectory(s"$partition-$storeName")
             snapshotStoreListener.workingFlush.put(tppStore, true)
+            logger.info(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
             val files = for {
               archivedFile <- Archiver(tempDir.toFile, offset: Long, new File(storePath)).archive()
-              checkpointFile <- CheckPointCreator(tempDir.toFile, offset).create()
+              checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset).create()
               uploadResultTriple <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
             } yield uploadResultTriple
+            files
+              .tap(
+                e => logger.error(s"Error while uploading state store: $e", e),
+                files => logger.info(s"Successfully uploaded state store: $files"))
             snapshotStoreListener.workingFlush.put(tppStore, false)
-            files.foreach(triple => println(triple))
           }
         }
         println()
