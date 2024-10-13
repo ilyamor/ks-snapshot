@@ -8,7 +8,7 @@ import java.io._
 import java.nio.file.Files
 import scala.util.Try
 
-case class Archiver(outputFile: File, sourceDir: File) {
+case class Archiver(outputFile: File, sourceDir: File, position: File) {
 
   def archive(): Either[Throwable, File] = {
     Try {
@@ -18,16 +18,16 @@ case class Archiver(outputFile: File, sourceDir: File) {
       val bos = new BufferedOutputStream(fos)
       val gzos = new GzipCompressorOutputStream(bos)
       val tarOs = new TarArchiveOutputStream(gzos)
-      try
+      try {
+        addFilesToTarGz(tarOs, position, "")
         // Recursively add files to the tar archive
         addFilesToTarGz(tarOs, sourceDir, "")
+      }
       finally {
-
         tarOs.close()
         gzos.close()
         bos.close()
         fos.close()
-
       }
     }.toEither.flatMap(_ => {
       val hasBytes = new FileInputStream(outputFile).available()
@@ -66,8 +66,8 @@ case class Archiver(outputFile: File, sourceDir: File) {
 }
 
 object Archiver {
-  def apply(tempDir: File, offset: Long, sourceDir: File): Archiver = {
+  def apply(tempDir: File, offset: Long, sourceDir: File, position: File): Archiver = {
     val outputFile = new File(s"${tempDir.getAbsolutePath}/$offset.tzr.gz")
-    new Archiver(outputFile, sourceDir)
+    new Archiver(outputFile, sourceDir, position)
   }
 }

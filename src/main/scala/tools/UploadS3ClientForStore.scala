@@ -16,12 +16,11 @@ import java.util.concurrent.CompletableFuture
 import scala.util.Try
 
 case class UploadS3ClientForStore private(client: S3Client, bucket: String, basePathS3: String) {
-  def uploadStateStore(archiveFile: File, checkPoint: File, position: File): Either[Throwable, (String, String, String, Long)] = {
+  def uploadStateStore(archiveFile: File, checkPoint: File): Either[Throwable, (String, String, Long)] = {
     for {
       f <- uploadArchive(archiveFile)
       u <- uploadCheckpoint(checkPoint)
-      p <- uploadCheckpoint(position)
-    } yield (f, u, p, System.currentTimeMillis())
+    } yield (f, u, System.currentTimeMillis())
   }
 
   private def uploadCheckpoint(checkPointFile: File): Either[Throwable, String] = {
@@ -80,7 +79,7 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
 object UploadS3ClientForStore {
   def apply(bucket: String, prefix: String, region: Region, storeName: String): UploadS3ClientForStore = {
     val client: S3Client = S3Client.builder
-      .endpointOverride(new URI("http://localhost:9000"))
+      /*.endpointOverride(new URI("http://localhost:9000"))
       .endpointProvider(new S3EndpointProvider {
         override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
           CompletableFuture.completedFuture(Endpoint.builder()
@@ -88,7 +87,7 @@ object UploadS3ClientForStore {
             .build());
         }
       })
-      .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))
+      .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))*/
       .region(region).build
     UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
   }
