@@ -23,7 +23,7 @@ import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{mapAsScalaMapConverter, mutableMapAsJavaMapConverter}
 import scala.util.{Try, Using}
 
-class S3ClientWrapper(bucketName: String) {
+class S3ClientWrapper(bucketName: String) extends Logging {
 
   val s3: S3Client = S3Client.builder
     .region(Region.EU_NORTH_1)
@@ -32,13 +32,14 @@ class S3ClientWrapper(bucketName: String) {
 
   val CHECKPOINT = ".checkpoint"
   val state = "state.tar.gz"
-  val suffix = "tar.gz"
+  val suffix = "tzr.gz"
 
 
   def getCheckpointFile(context: StateStoreContext, partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
     val rootPath = s"$applicationId/$partition/$storeName"
     val checkpointPath = s"$rootPath/$CHECKPOINT"
     Try {
+      logger.info(s"Fetching checkpoint file from $checkpointPath")
       val res: ResponseInputStream[GetObjectResponse] = s3.getObject(GetObjectRequest.builder().bucket(bucketName).key(checkpointPath).build())
       val tempFile = new File("checkpoint")
 
@@ -56,7 +57,7 @@ class S3ClientWrapper(bucketName: String) {
   def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, ResponseInputStream[GetObjectResponse]] = {
     val rootPath = s"$applicationId/$partition/$storeName"
     val stateFileCompressed = s"$rootPath/$offset.$suffix"
-
+    logger.info(s"Fetching state store from $stateFileCompressed")
     Try {
       s3.getObject(GetObjectRequest.builder().bucket(bucketName).key(stateFileCompressed).build())
     }.toEither
@@ -132,11 +133,13 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
       remoteCheckPoint match {
         case Some(localCheckPointFile) =>
           localCheckPointFile.read().asScala.values.headOption match {
-            case Some(offset) => s3ClientWrapper.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
+            case Some(offset) =>
+
+              s3ClientWrapper.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
               .tapError(e => logger.error(s"Error while fetching remote state store: $e", e))
               .tapError(e => throw e)
               .map((response: ResponseInputStream[GetObjectResponse]) => {
-                val destDir = s"${context.stateDir.getAbsolutePath}/${storeName}"
+                val destDir = s"${context.stateDir.getAbsolutePath}"
                 extractAndDecompress(destDir, response)
                 ()
               })
@@ -154,14 +157,15 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
 
     private def shouldFetchStateStoreFromSnapshot(localCheckPointFile: Option[OffsetCheckpoint], remoteCheckPoint: Option[OffsetCheckpoint]) = {
       (localCheckPointFile, remoteCheckPoint) match {
-        case (None, _) => {
-          logger.info("Local checkpoint file not found, fetching remote state store")
-          true
-        }
         case (_, None) => {
           logger.info("Remote checkpoint file not found, not fetching remote state store")
           false
         }
+        case (None, _) => {
+          logger.info("Local checkpoint file not found, fetching remote state store")
+          true
+        }
+
         case (Some(local), Some(remote)) => isOffsetBiggerThanMin(local, remote)
       }
     }
