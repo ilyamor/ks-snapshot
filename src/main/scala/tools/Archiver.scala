@@ -29,7 +29,7 @@ case class Archiver(outputFile: File, sourceDir: File) {
       if (hasBytes > 0)
         Right(outputFile)
       else
-        Left(new Exception("Empty state"+ outputFile.getAbsolutePath))
+        Left(new Exception("Empty state "+ outputFile.getAbsolutePath))
     })
   }
 
