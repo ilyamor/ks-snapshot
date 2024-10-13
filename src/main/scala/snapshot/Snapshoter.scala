@@ -5,7 +5,7 @@ import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.streams.processor.StateStoreContext
+import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.state.internals.OffsetCheckpoint
 import org.apache.logging.log4j.scala.Logging
@@ -17,10 +17,12 @@ import tools.EitherOps.EitherOps
 import tools.{Archiver, CheckPointCreator, UploadS3ClientForStore}
 
 import java.io.{File, FileOutputStream}
+import java.lang
 import java.nio.file.Files
+import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.jdk.CollectionConverters.{mapAsScalaMapConverter, mutableMapAsJavaMapConverter}
+import scala.jdk.CollectionConverters.{mapAsJavaMap, mapAsJavaMapConverter, mapAsScalaMapConverter, mutableMapAsJavaMapConverter}
 import scala.util.{Try, Using}
 
 class S3ClientWrapper(bucketName: String) extends Logging {
@@ -262,6 +264,7 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
       val partition = context.taskId.partition()
       val tp = new TopicPartition(topic, partition)
       val offset = context.recordCollector().offsets().get(tp)
+      val sourceTopic = context.topic()
 
       val tppStore = TppStore(tp, storeName)
       if (!snapshotStoreListener.taskStore.getOrDefault(tppStore, false)
@@ -272,11 +275,17 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
             val tempDir = Files.createTempDirectory(s"$partition-$storeName")
             snapshotStoreListener.workingFlush.put(tppStore, true)
             logger.info(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
+
+            val stateStore: StateStore = context.stateManager().getStore(storeName)
+            val positions: Map[TopicPartition, lang.Long] = stateStore.getPosition.getPartitionPositions(context.topic())
+              .toMap.map(tp => (new TopicPartition(sourceTopic, tp._1), tp._2))
+
             val files = for {
-              archivedFile <- Archiver(tempDir.toFile, offset: Long, new File(storePath)).archive()
-              checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset).create()
-              uploadResultTriple <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
-            } yield uploadResultTriple
+              archivedFile <- Archiver(tempDir.toFile, offset, new File(storePath)).archive()
+              checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset).write()
+              positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
+              uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile, positionFile)
+            } yield uploadResultQuarto
             files
               .tap(
                 e => logger.error(s"Error while uploading state store: $e", e),
