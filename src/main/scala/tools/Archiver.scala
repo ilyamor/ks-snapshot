@@ -22,7 +22,12 @@ case class Archiver(outputFile: File, sourceDir: File) {
         // Recursively add files to the tar archive
         addFilesToTarGz(tarOs, sourceDir, "")
       finally {
-        silentClose(fos, bos, gzos, tarOs)
+
+        tarOs.close()
+        gzos.close()
+        bos.close()
+        fos.close()
+
       }
     }.toEither.flatMap(_ => {
       val hasBytes = new FileInputStream(outputFile).available()
@@ -48,7 +53,7 @@ case class Archiver(outputFile: File, sourceDir: File) {
       tarOs.putArchiveEntry(tarEntry)
       try {
         println(s"Archiving file ${file.getAbsolutePath}")
-        IOUtils.copy(fis, tarOs)
+        println("file copy " + IOUtils.copy(fis, tarOs))
       } finally {
         fis.close()
         tarOs.closeArchiveEntry()
