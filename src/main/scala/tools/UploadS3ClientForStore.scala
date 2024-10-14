@@ -1,18 +1,13 @@
 package tools
 
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
 import software.amazon.awssdk.core.sync.RequestBody
-import software.amazon.awssdk.endpoints.Endpoint
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
-import software.amazon.awssdk.services.s3.endpoints.{S3EndpointParams, S3EndpointProvider}
 import software.amazon.awssdk.services.s3.model._
 
 import java.io.{File, RandomAccessFile}
-import java.net.URI
 import java.nio.ByteBuffer
 import java.util
-import java.util.concurrent.CompletableFuture
 import scala.util.Try
 
 case class UploadS3ClientForStore private(client: S3Client, bucket: String, basePathS3: String) {
@@ -79,15 +74,15 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
 object UploadS3ClientForStore {
   def apply(bucket: String, prefix: String, region: Region, storeName: String): UploadS3ClientForStore = {
     val client: S3Client = S3Client.builder
-      /*.endpointOverride(new URI("http://localhost:9000"))
-      .endpointProvider(new S3EndpointProvider {
-        override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
-          CompletableFuture.completedFuture(Endpoint.builder()
-            .url(URI.create("http://localhost:9000/" + endpointParams.bucket()))
-            .build());
-        }
-      })
-      .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))*/
+//      .endpointOverride(new URI("http://localhost:9000"))
+//      .endpointProvider(new S3EndpointProvider {
+//        override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
+//          CompletableFuture.completedFuture(Endpoint.builder()
+//            .url(URI.create("http://localhost:9000/" + endpointParams.bucket()))
+//            .build());
+//        }
+//      })
+//      .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))
       .region(region).build
     UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
   }

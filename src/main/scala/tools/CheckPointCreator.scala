@@ -5,7 +5,7 @@ import org.apache.kafka.streams.state.internals.OffsetCheckpoint
 
 import java.io.File
 import java.nio.file.Path
-import scala.jdk.CollectionConverters.mapAsJavaMapConverter
+import scala.jdk.CollectionConverters.MapHasAsJava
 import scala.util.Try
 
 case class CheckPointCreator private(pathToVersion: Path, tp: Map[TopicPartition, java.lang.Long]) {
