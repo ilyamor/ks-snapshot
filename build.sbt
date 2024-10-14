@@ -45,6 +45,12 @@ libraryDependencies ++= Seq(
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
 
+// Add resolvers for releases and snapshots
+val user = sys.env.getOrElse("JFROG_USER", "ilya.m@coralogix.com")
+//val email = if (user.contains('@')) user else user + "@coralogix.com"
+val pass = sys.env.getOrElse("JFROG_PASSWORD", "AKCp8jR7C3LUkAi3QTrLK9kZ33MAfQsJjAtvVQQH2yRWsm73GP9gDFbFivVG65nNkQXHXePLJ")
+
+
 resolvers ++= Seq(
   "Private Artifactory SBT resolver" at "https://cgx.jfrog.io/artifactory/virtual.sbt.coralogix.net",
   "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
