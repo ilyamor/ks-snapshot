@@ -47,17 +47,10 @@ libraryDependencies ++= Seq(
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
 
-// Add resolvers for releases and snapshots
-val user = sys.env.getOrElse("JFROG_USER", "ilya.m@coralogix.com")
-//val email = if (user.contains('@')) user else user + "@coralogix.com"
-val pass = sys.env.getOrElse("JFROG_PASSWORD", "AKCp8jR7C3LUkAi3QTrLK9kZ33MAfQsJjAtvVQQH2yRWsm73GP9gDFbFivVG65nNkQXHXePLJ")
-
-
-resolvers ++= Seq(
-  "Private Artifactory SBT resolver" at "https://cgx.jfrog.io/artifactory/virtual.sbt.coralogix.net",
-  "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
-)
-publishMavenStyle := true
-publishTo         := Some(
-  "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
-)
+libraryDependencies += "software.amazon.awssdk" % "s3" % "2.28.16"
+//appache commons
+libraryDependencies += "org.apache.commons" % "commons-compress" % "1.26.1"
+libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.17.0"
+lazy val root = (project in file(".")).
+  settings(
+  )
