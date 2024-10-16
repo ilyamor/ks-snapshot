@@ -3,6 +3,7 @@ package snapshot
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.apache.commons.io.FileUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
@@ -18,7 +19,7 @@ import utils.EitherOps.EitherOps
 import java.io.{File, FileOutputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
-import java.nio.file.{Files, Path, StandardCopyOption}
+import java.nio.file.{Files, Path}
 import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
@@ -38,8 +39,6 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   }
 
   def flushSnapshot() = {
-    println("continuing")
-
     Flusher.flushSnapshot()
   }
 
@@ -247,21 +246,10 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
 
     def copyStorePathToTempDir(storePath: String): Path = {
       val storeDir = new File(storePath)
-      val tempDir = Files.createTempDirectory(s"bla")
-
-      def copyRecursively(source: File, target: File): Unit = {
-        if (source.isDirectory) {
-          if (!target.exists()) target.mkdir()
-          source.listFiles().foreach { file =>
-            copyRecursively(file, new File(target, file.getName))
-          }
-        } else {
-          Files.copy(source.toPath, target.toPath, StandardCopyOption.REPLACE_EXISTING)
-        }
-      }
-
-      copyRecursively(storeDir, tempDir.toFile)
-      tempDir
+      val newTempDir = Files.createTempDirectory(s"${storeDir.getName}").toAbsolutePath
+      val newTempDirFile = Files.createDirectory(Path.of(newTempDir.toAbsolutePath+ "/" + storeName))
+      FileUtils.copyDirectory(storeDir, newTempDirFile.toFile)
+      newTempDirFile
     }
 
     def flushSnapshot(): Unit = {
@@ -278,7 +266,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
         val sourceTopic = Option(Try(context.topic()).toOption).flatten
         val offset = Option(context.recordCollector())
           .flatMap(collector => Option(collector.offsets().get(tp)))
-        if (offset.isDefined && sourceTopic.isDefined && Random.nextInt(100) == 0) {
+        if (offset.isDefined && sourceTopic.isDefined && Random.nextInt(1) == 0) {
 
           val time = currentTimeMillis()
           val segments = segmentFetcher(underlyingStore)
@@ -288,7 +276,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
           val storePath = s"${stateDir.getAbsolutePath}/$storeName"
           //copying storePath to tempDir
 
-          val tempDir = Files.createTempDirectory(s"bla")
+          val tempDir = Files.createTempDirectory(s"$partition-$storeName")
           val path = copyStorePathToTempDir(storePath)
           val time2 = currentTimeMillis()
 
@@ -305,7 +293,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
 
             val files = for {
               positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
-              archivedFile <- Archiver(tempDir.toFile, offset.get, path.toFile, positionFile).archive()
+              archivedFile <- Archiver(tempDir.toFile, offset.get, new File(s"${path.toAbsolutePath}"), positionFile).archive()
               checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
               uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
             } yield uploadResultQuarto
