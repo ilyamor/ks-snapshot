@@ -1,4 +1,4 @@
-package tools
+package snapshot.tools
 
 import org.apache.kafka.streams.processor.StateStoreContext
 import org.apache.kafka.streams.state.internals.OffsetCheckpoint
@@ -61,7 +61,7 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
     val stateFileCompressed = s"$rootPath/$offset.$suffix"
     logger.info(s"Fetching state store from $stateFileCompressed")
     Try {
-      s3.getObject(GetObjectRequest.builder().bucket(bucket).key(stateFileCompressed).build())
+      client.getObject(GetObjectRequest.builder().bucket(bucket).key(stateFileCompressed).build())
     }.toEither
 
 
