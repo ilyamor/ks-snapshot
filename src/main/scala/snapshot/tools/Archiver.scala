@@ -21,15 +21,13 @@ case class Archiver(outputFile: File, sourceDir: File, position: File)  extends 
       val tarOs = new TarArchiveOutputStream(gzos)
       tarOs.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
       try {
-        addFilesToTarGz(tarOs, position, "")
         // Recursively add files to the tar archive
-        addFilesToTarGz(tarOs, sourceDir, "")
+        addFilesToTarGz(tarOs, sourceDir, "" )
+        // add position file
+        addFilesToTarGz(tarOs, position, s"${sourceDir.getName}/")
       }
       finally {
-        tarOs.close()
-        gzos.close()
-        bos.close()
-        fos.close()
+        silentClose(tarOs, gzos, bos, fos)
       }
     }.toEither.flatMap(_ => {
       val hasBytes = new FileInputStream(outputFile).available()
@@ -43,7 +41,6 @@ case class Archiver(outputFile: File, sourceDir: File, position: File)  extends 
 
   private def silentClose(in: OutputStream*): Unit = {
     in.foreach(cl => Try({
-      cl.flush();
       cl.close();
     }))
   }
@@ -55,7 +52,7 @@ case class Archiver(outputFile: File, sourceDir: File, position: File)  extends 
       val tarEntry = new TarArchiveEntry(file, entryName)
       tarOs.putArchiveEntry(tarEntry)
       try {
-        logger.info(s"Archiving file ${file.getAbsolutePath}")
+        logger.info(s"Archiving file ${file.getAbsolutePath} to ${tarEntry.getName}" )
         logger.info("file copy " + IOUtils.copy(fis, tarOs))
       } finally {
         fis.close()
