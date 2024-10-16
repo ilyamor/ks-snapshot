@@ -7,8 +7,9 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
-import org.apache.kafka.streams.state.internals.OffsetCheckpoint
+import org.apache.kafka.streams.state.internals.{OffsetCheckpoint, RocksDBSegmentedBytesStore}
 import org.apache.logging.log4j.scala.Logging
+import org.rocksdb.RocksDB
 import software.amazon.awssdk.core.ResponseInputStream
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
@@ -18,8 +19,9 @@ import tools.{Archiver, CheckPointCreator, UploadS3ClientForStore}
 
 import java.io.{File, FileOutputStream}
 import java.lang
-import java.nio.file.Files
+import java.nio.file.{Files, Path, StandardCopyOption}
 import scala.collection.convert.ImplicitConversions.`map AsScala`
+import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
 import scala.util.{Random, Try, Using}
 
@@ -30,59 +32,7 @@ class S3ClientWrapper(bucketName: String) extends Logging {
     .build
 
 
-  val CHECKPOINT = ".checkpoint"
-  val state = "state.tar.gz"
-  val suffix = "tzr.gz"
 
-
-  def getCheckpointFile(context: StateStoreContext, partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
-    val rootPath = s"$applicationId/$partition/$storeName"
-    val checkpointPath = s"$rootPath/$CHECKPOINT"
-    Try {
-      logger.info(s"Fetching checkpoint file from $checkpointPath")
-      val res: ResponseInputStream[GetObjectResponse] = s3.getObject(GetObjectRequest.builder().bucket(bucketName).key(checkpointPath).build())
-      val tempFile = new File("checkpoint")
-
-      Using.resource(new FileOutputStream(tempFile)) {
-        fos =>
-          res.transferTo(fos)
-          tempFile
-      }
-    }.map(new OffsetCheckpoint(_))
-      .toEither
-
-
-  }
-
-  def getPositionFile(context: StateStoreContext, partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
-    val rootPath = s"$applicationId/$partition/$storeName"
-    val checkpointPath = s"$rootPath/$storeName$POSITION"
-    Try {
-      logger.info(s"Fetching checkpoint file from $checkpointPath")
-      val res: ResponseInputStream[GetObjectResponse] = s3.getObject(GetObjectRequest.builder().bucket(bucketName).key(checkpointPath).build())
-      val tempFile = new File("checkpoint")
-
-      Using.resource(new FileOutputStream(tempFile)) {
-        fos =>
-          res.transferTo(fos)
-          tempFile
-      }
-    }.map(new OffsetCheckpoint(_))
-      .toEither
-  }
-
-  def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, ResponseInputStream[GetObjectResponse]] = {
-    val rootPath = s"$applicationId/$partition/$storeName"
-    val stateFileCompressed = s"$rootPath/$offset.$suffix"
-    logger.info(s"Fetching state store from $stateFileCompressed")
-    Try {
-      s3.getObject(GetObjectRequest.builder().bucket(bucketName).key(stateFileCompressed).build())
-    }.toEither
-
-
-  }
-
-  val POSITION = ".position"
 
 }
 
@@ -91,7 +41,9 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
                       s3ClientForStore: UploadS3ClientForStore,
                       snapshotStoreListener: SnapshotStoreListener,
                       context: ProcessorContextImpl,
-                      storeName: String) extends Logging {
+                      storeName: String,
+                      underlyingStore: RocksDBSegmentedBytesStore,
+                      segmentFetcher: RocksDBSegmentedBytesStore => List[RocksDB]) extends Logging {
 
   def initFromSnapshot() = {
     Fetcher.initFromSnapshot()
@@ -302,6 +254,26 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
 
 
   private object Flusher {
+
+    def copyStorePathToTempDir(storePath: String): Path = {
+      val storeDir = new File(storePath)
+      val tempDir = Files.createTempDirectory(s"${storeDir.getName}-temp")
+
+      def copyRecursively(source: File, target: File): Unit = {
+        if (source.isDirectory) {
+          if (!target.exists()) target.mkdir()
+          source.listFiles().foreach { file =>
+            copyRecursively(file, new File(target, file.getName))
+          }
+        } else {
+          Files.copy(source.toPath, target.toPath, StandardCopyOption.REPLACE_EXISTING)
+        }
+      }
+
+      copyRecursively(storeDir, tempDir.toFile)
+      tempDir
+    }
+
     def flushSnapshot(): Unit = {
       val stateDir = context.stateDir()
       val topic = context.changelogFor(storeName)
@@ -313,34 +285,45 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
       if (!snapshotStoreListener.taskStore.getOrDefault(tppStore, false)
         && !snapshotStoreListener.workingFlush.getOrDefault(tppStore, false)
         && !snapshotStoreListener.standby.getOrDefault(tppStore, false)) {
-        val sourceTopic = context.topic()
+        val sourceTopic = Option(context.topic())
         val offset = Option(context.recordCollector())
           .flatMap(collector => Option(collector.offsets().get(tp)))
-        if (offset.isDefined && Random.nextInt(20) == 0) {
+        if (offset.isDefined && sourceTopic.isDefined && Random.nextInt(20) == 0) {
+
+          val segments = segmentFetcher(underlyingStore)
+          segments.foreach(_.pauseBackgroundWork())
 
           val storePath = s"${stateDir.getAbsolutePath}/$storeName"
+          //copying storePath to tempDir
+
           val tempDir = Files.createTempDirectory(s"$partition-$storeName")
-          snapshotStoreListener.workingFlush.put(tppStore, true)
-          logger.info(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
+          val path = copyStorePathToTempDir(storePath)
+          Future {
+            snapshotStoreListener.workingFlush.put(tppStore, true)
+            logger.info(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
 
-          val stateStore: StateStore = context.stateManager().getStore(storeName)
-          val positions: Map[TopicPartition, lang.Long] = stateStore.getPosition.getPartitionPositions(context.topic())
-            .toMap.map(tp => (new TopicPartition(sourceTopic, tp._1), tp._2))
+            val stateStore: StateStore = context.stateManager().getStore(storeName)
+            val positions: Map[TopicPartition, lang.Long] = stateStore.getPosition.getPartitionPositions(context.topic())
+              .toMap.map(tp => (new TopicPartition(sourceTopic.get, tp._1), tp._2))
 
-          val files = for {
-            positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
-            archivedFile <- Archiver(tempDir.toFile, offset.get, new File(storePath), positionFile).archive()
-            checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
-            uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
-          } yield uploadResultQuarto
-          files
-            .tap(
-              e => logger.error(s"Error while uploading state store: $e", e),
-              files => logger.info(s"Successfully uploaded state store: $files"))
-          snapshotStoreListener.workingFlush.put(tppStore, false)
+            val files = for {
+              positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
+              archivedFile <- Archiver(tempDir.toFile, offset.get, path.toFile, positionFile).archive()
+              checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
+              uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
+            } yield uploadResultQuarto
+            segments.foreach(_.continueBackgroundWork())
+            files
+              .tap(
+                e => logger.error(s"Error while uploading state store: $e", e),
+                files => logger.info(s"Successfully uploaded state store: $files"))
+            snapshotStoreListener.workingFlush.put(tppStore, false)
+          }(scala.concurrent.ExecutionContext.global)
         }
       }
-      println()
     }
+
+    println()
   }
+
 }
