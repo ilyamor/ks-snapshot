@@ -1,14 +1,15 @@
-package tools
+package snapshot.tools
 
 import org.apache.commons.compress.archivers.tar.{TarArchiveEntry, TarArchiveOutputStream}
 import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.apache.commons.io.IOUtils
+import org.apache.logging.log4j.scala.Logging
 
 import java.io._
 import java.nio.file.Files
 import scala.util.Try
 
-case class Archiver(outputFile: File, sourceDir: File, position: File) {
+case class Archiver(outputFile: File, sourceDir: File, position: File)  extends Logging{
 
   def archive(): Either[Throwable, File] = {
     Try {
@@ -18,6 +19,7 @@ case class Archiver(outputFile: File, sourceDir: File, position: File) {
       val bos = new BufferedOutputStream(fos)
       val gzos = new GzipCompressorOutputStream(bos)
       val tarOs = new TarArchiveOutputStream(gzos)
+      tarOs.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
       try {
         addFilesToTarGz(tarOs, position, "")
         // Recursively add files to the tar archive
@@ -52,14 +54,14 @@ case class Archiver(outputFile: File, sourceDir: File, position: File) {
       val tarEntry = new TarArchiveEntry(file, entryName)
       tarOs.putArchiveEntry(tarEntry)
       try {
-        println(s"Archiving file ${file.getAbsolutePath}")
-        println("file copy " + IOUtils.copy(fis, tarOs))
+        logger.info(s"Archiving file ${file.getAbsolutePath}")
+        logger.info("file copy " + IOUtils.copy(fis, tarOs))
       } finally {
         fis.close()
         tarOs.closeArchiveEntry()
       }
     } else if (file.isDirectory) {
-      println(s"Starting dir ${file.getAbsolutePath}/")
+      logger.info(s"Starting dir ${file.getAbsolutePath}/")
       Files.list(file.toPath).forEach(childFile => addFilesToTarGz(tarOs, childFile.toFile, entryName + "/"))
     }
   }

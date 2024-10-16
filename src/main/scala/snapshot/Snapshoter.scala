@@ -1,55 +1,45 @@
 package snapshot
 
-import io.confluent.examples.streams.SnapshotStoreListener.{SnapshotStoreListener, TppStore}
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
-import org.apache.kafka.streams.state.internals.{OffsetCheckpoint, RocksDBSegmentedBytesStore}
+import org.apache.kafka.streams.state.internals.CoralogixStore.SnapshotStoreListeners.{SnapshotStoreListener, TppStore}
+import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesStore, OffsetCheckpoint, Segment}
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
+import snapshot.tools.{Archiver, CheckPointCreator, UploadS3ClientForStore}
 import software.amazon.awssdk.core.ResponseInputStream
-import software.amazon.awssdk.regions.Region
-import software.amazon.awssdk.services.s3.S3Client
-import software.amazon.awssdk.services.s3.model.{GetObjectRequest, GetObjectResponse}
-import tools.EitherOps.EitherOps
-import tools.{Archiver, CheckPointCreator, UploadS3ClientForStore}
+import software.amazon.awssdk.services.s3.model.GetObjectResponse
+import utils.EitherOps.EitherOps
 
 import java.io.{File, FileOutputStream}
 import java.lang
+import java.lang.System.currentTimeMillis
 import java.nio.file.{Files, Path, StandardCopyOption}
 import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
-import scala.util.{Random, Try, Using}
-
-class S3ClientWrapper(bucketName: String) extends Logging {
-
-  val s3: S3Client = S3Client.builder
-    .region(Region.EU_NORTH_1)
-    .build
+import scala.util.{Random, Try}
 
 
-
-
-}
-
-
-case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
-                      s3ClientForStore: UploadS3ClientForStore,
-                      snapshotStoreListener: SnapshotStoreListener,
-                      context: ProcessorContextImpl,
-                      storeName: String,
-                      underlyingStore: RocksDBSegmentedBytesStore,
-                      segmentFetcher: RocksDBSegmentedBytesStore => List[RocksDB]) extends Logging {
+case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
+                                                                                     s3ClientForStore: UploadS3ClientForStore,
+                                                                                     snapshotStoreListener: SnapshotStoreListener.type,
+                                                                                     context: ProcessorContextImpl,
+                                                                                     storeName: String,
+                                                                                     underlyingStore: Store,
+                                                                                     segmentFetcher: Store => List[RocksDB]) extends Logging {
 
   def initFromSnapshot() = {
     Fetcher.initFromSnapshot()
   }
 
   def flushSnapshot() = {
+    println("continuing")
+
     Flusher.flushSnapshot()
   }
 
@@ -79,7 +69,7 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
     }
 
     private def fetchRemotePosition(context: StateStoreContext) = {
-      s3ClientWrapper.getPositionFile(context, context.taskId.toString, storeName, context.applicationId())
+      s3ClientForStore.getPositionFile(context, context.taskId.toString, storeName, context.applicationId())
         .tapError(e => logger.error(s"Error while fetching remote position: $e"))
     }
   }
@@ -133,7 +123,7 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
         localCheckPointFile.read().asScala.values.headOption match {
           case Some(offset) =>
 
-            s3ClientWrapper.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
+            s3ClientForStore.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
               .tapError(e => logger.error(s"Error while fetching remote state store: $e", e))
               .tapError(e => throw e)
               .map((response: ResponseInputStream[GetObjectResponse]) => {
@@ -205,7 +195,7 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
   }
 
   private def fetchRemoteCheckPointFile(context: StateStoreContext): Either[Throwable, OffsetCheckpoint] = {
-    s3ClientWrapper.getCheckpointFile(context, context.taskId.toString, storeName, context.applicationId())
+    s3ClientForStore.getCheckpointFile(context, context.taskId.toString, storeName, context.applicationId())
       .tapError(e => logger.error(s"Error while fetching remote checkpoint: $e"))
   }
 
@@ -257,7 +247,7 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
 
     def copyStorePathToTempDir(storePath: String): Path = {
       val storeDir = new File(storePath)
-      val tempDir = Files.createTempDirectory(s"${storeDir.getName}-temp")
+      val tempDir = Files.createTempDirectory(s"bla")
 
       def copyRecursively(source: File, target: File): Unit = {
         if (source.isDirectory) {
@@ -285,19 +275,26 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
       if (!snapshotStoreListener.taskStore.getOrDefault(tppStore, false)
         && !snapshotStoreListener.workingFlush.getOrDefault(tppStore, false)
         && !snapshotStoreListener.standby.getOrDefault(tppStore, false)) {
-        val sourceTopic = Option(context.topic())
+        val sourceTopic = Option(Try(context.topic()).toOption).flatten
         val offset = Option(context.recordCollector())
           .flatMap(collector => Option(collector.offsets().get(tp)))
-        if (offset.isDefined && sourceTopic.isDefined && Random.nextInt(20) == 0) {
+        if (offset.isDefined && sourceTopic.isDefined && Random.nextInt(100) == 0) {
 
+          val time = currentTimeMillis()
           val segments = segmentFetcher(underlyingStore)
-          segments.foreach(_.pauseBackgroundWork())
 
+          segments.foreach(_.pauseBackgroundWork())
+          println("pausing took: " + (currentTimeMillis() - time))
           val storePath = s"${stateDir.getAbsolutePath}/$storeName"
           //copying storePath to tempDir
 
-          val tempDir = Files.createTempDirectory(s"$partition-$storeName")
+          val tempDir = Files.createTempDirectory(s"bla")
           val path = copyStorePathToTempDir(storePath)
+          val time2 = currentTimeMillis()
+
+          segments.foreach(_.continueBackgroundWork())
+          println("continue took: " + (currentTimeMillis() - time2))
+
           Future {
             snapshotStoreListener.workingFlush.put(tppStore, true)
             logger.info(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
@@ -312,7 +309,6 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
               checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
               uploadResultQuarto <- s3ClientForStore.uploadStateStore(archivedFile, checkpointFile)
             } yield uploadResultQuarto
-            segments.foreach(_.continueBackgroundWork())
             files
               .tap(
                 e => logger.error(s"Error while uploading state store: $e", e),
@@ -320,6 +316,7 @@ case class Snapshoter(s3ClientWrapper: S3ClientWrapper,
             snapshotStoreListener.workingFlush.put(tppStore, false)
           }(scala.concurrent.ExecutionContext.global)
         }
+
       }
     }
 
