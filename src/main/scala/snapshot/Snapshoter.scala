@@ -7,7 +7,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
-import org.apache.kafka.streams.state.internals.CoralogixStore.SnapshotStoreListeners.{SnapshotStoreListener, TppStore}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.{SnapshotStoreListener, TppStore}
 import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesStore, OffsetCheckpoint, Segment}
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
@@ -20,7 +20,6 @@ import java.io.{File, FileOutputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
 import java.nio.file.{Files, Path}
-import scala.collection.convert.ImplicitConversions.`map AsScala`
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
 import scala.util.{Random, Try}
@@ -59,33 +58,33 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
         fetchAndWriteLocally(context, remoteCheckPoint) ->
           overrideLocalCheckPointFile(context, localCheckPointFile, remoteCheckPoint, ".checkpoint") -> {
           val localPosition = overLocalPositionFile(context)
-          val remotePosition = fetchRemotePosition(context)
+          val remotePosition = getPositionFileFromDownloadedStore(context)
           overrideLocalCheckPointFile(context, localPosition.toOption, remotePosition.toOption, s"${storeName}.position")
         }
-
       }
-
     }
 
-    private def fetchRemotePosition(context: StateStoreContext) = {
-      s3ClientForStore.getPositionFile(context, context.taskId.toString, storeName, context.applicationId())
-        .tapError(e => logger.error(s"Error while fetching remote position: $e"))
+    private def getPositionFileFromDownloadedStore(context: StateStoreContext): Either[IllegalArgumentException, OffsetCheckpoint] = {
+      val positionFile = s"${context.stateDir()}/$storeName/$storeName.position"
+      val file = new File(positionFile)
+      if (file.exists())
+        Right(new OffsetCheckpoint(file))
+      else {
+        Left(new IllegalArgumentException("Checkpoint file not found"))
+      }
     }
   }
 
-
   private def overLocalPositionFile(context: StateStoreContext) = {
-
     val checkpoint = ".position"
     val stateDir = context.stateDir()
-    val checkpointFile = s"${stateDir.toString}/$storeName/$storeName$checkpoint"
+    val checkpointFile = s"${stateDir.toString}/$checkpoint"
     val file = new File(checkpointFile)
     if (file.exists())
       Right(new OffsetCheckpoint(file))
     else {
       Left(new IllegalArgumentException("Checkpoint file not found"))
     }
-
   }
 
   private def overrideLocalCheckPointFile(context: StateStoreContext, localCheckPointFile: Option[OffsetCheckpoint], remoteCheckPoint: Option[OffsetCheckpoint], checkpointSuffix: String) = {
@@ -179,7 +178,6 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     }
   }
 
-
   private def getLocalCheckpointFile(context: StateStoreContext): Either[IllegalArgumentException, OffsetCheckpoint] = {
     val checkpoint = ".checkpoint"
     val stateDir = context.stateDir()
@@ -190,16 +188,14 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     else {
       Left(new IllegalArgumentException("Checkpoint file not found"))
     }
-
   }
 
   private def fetchRemoteCheckPointFile(context: StateStoreContext): Either[Throwable, OffsetCheckpoint] = {
-    s3ClientForStore.getCheckpointFile(context, context.taskId.toString, storeName, context.applicationId())
+    s3ClientForStore.getCheckpointFile(context.taskId.toString, storeName, context.applicationId())
       .tapError(e => logger.error(s"Error while fetching remote checkpoint: $e"))
   }
 
   val OFFSETTHRESHOLD: Int = 10000
-
 
   private def extractAndDecompress(destDir: String, response: ResponseInputStream[GetObjectResponse]) = {
     try {
@@ -289,7 +285,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
 
             val stateStore: StateStore = context.stateManager().getStore(storeName)
             val positions: Map[TopicPartition, lang.Long] = stateStore.getPosition.getPartitionPositions(context.topic())
-              .toMap.map(tp => (new TopicPartition(sourceTopic.get, tp._1), tp._2))
+              .asScala.map(tp => (new TopicPartition(sourceTopic.get, tp._1), tp._2)).toMap
 
             val files = for {
               positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
