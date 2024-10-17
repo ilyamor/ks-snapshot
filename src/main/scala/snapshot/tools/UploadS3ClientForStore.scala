@@ -1,17 +1,22 @@
 package snapshot.tools
 
-import org.apache.kafka.streams.processor.StateStoreContext
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_KEY_PREFIX
 import org.apache.kafka.streams.state.internals.OffsetCheckpoint
 import org.apache.logging.log4j.scala.Logging
 import software.amazon.awssdk.core.ResponseInputStream
 import software.amazon.awssdk.core.sync.RequestBody
+import software.amazon.awssdk.endpoints.Endpoint
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.endpoints.{S3EndpointParams, S3EndpointProvider}
 import software.amazon.awssdk.services.s3.model._
 
 import java.io.{File, FileOutputStream, RandomAccessFile}
+import java.net.URI
 import java.nio.ByteBuffer
 import java.util
+import java.util.concurrent.CompletableFuture
 import scala.util.{Try, Using}
 
 case class UploadS3ClientForStore private(client: S3Client, bucket: String, basePathS3: String) extends Logging {
@@ -20,28 +25,9 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
   val suffix = "tzr.gz"
 
 
-  def getCheckpointFile(context: StateStoreContext, partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
+  def getCheckpointFile(partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
     val rootPath = s"$applicationId/$partition/$storeName"
     val checkpointPath = s"$rootPath/$CHECKPOINT"
-    Try {
-      logger.info(s"Fetching checkpoint file from $checkpointPath")
-      val res: ResponseInputStream[GetObjectResponse] = client.getObject(GetObjectRequest.builder().bucket(bucket).key(checkpointPath).build())
-      val tempFile = new File("checkpoint")
-
-      Using.resource(new FileOutputStream(tempFile)) {
-        fos =>
-          res.transferTo(fos)
-          tempFile
-      }
-    }.map(new OffsetCheckpoint(_))
-      .toEither
-
-
-  }
-
-  def getPositionFile(context: StateStoreContext, partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
-    val rootPath = s"$applicationId/$partition/$storeName"
-    val checkpointPath = s"$rootPath/$storeName$POSITION"
     Try {
       logger.info(s"Fetching checkpoint file from $checkpointPath")
       val res: ResponseInputStream[GetObjectResponse] = client.getObject(GetObjectRequest.builder().bucket(bucket).key(checkpointPath).build())
@@ -63,11 +49,7 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
     Try {
       client.getObject(GetObjectRequest.builder().bucket(bucket).key(stateFileCompressed).build())
     }.toEither
-
-
   }
-
-  val POSITION = ".position"
 
   def uploadStateStore(archiveFile: File, checkPoint: File): Either[Throwable, (String, String, Long)] = {
     for {
@@ -130,18 +112,29 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
 }
 
 object UploadS3ClientForStore {
-  def apply(bucket: String, prefix: String, region: Region, storeName: String): UploadS3ClientForStore = {
-    val client: S3Client = S3Client.builder
-      //      .endpointOverride(new URI("http://localhost:9000"))
-      //      .endpointProvider(new S3EndpointProvider {
-      //        override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
-      //          CompletableFuture.completedFuture(Endpoint.builder()
-      //            .url(URI.create("http://localhost:9000/" + endpointParams.bucket()))
-      //            .build());
-      //        }
-      //      })
-      //      .credentialsProvider(() => AwsBasicCredentials.create("test", "testtest"))
-      .region(region).build
+  def apply(config: S3StateStoreConfig, storeName: String): UploadS3ClientForStore = {
+
+    val bucket = config.getString(S3StateStoreConfig.STATE_BUCKET)
+    val prefix = config.getString(STATE_KEY_PREFIX)
+    val region = Region.of(config.getString(S3StateStoreConfig.STATE_REGION))
+    val endPoint = if (config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT).endsWith("/"))
+      config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT) else config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT) + "/"
+
+    val client: S3Client =
+      if (endPoint.isBlank) {
+        S3Client.builder.region(region).build
+      } else {
+          S3Client.builder
+            .endpointOverride(new URI(endPoint))
+            .endpointProvider(new S3EndpointProvider {
+              override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
+                CompletableFuture.completedFuture(Endpoint.builder()
+                  .url(URI.create(endPoint + endpointParams.bucket()))
+                  .build());
+              }
+            })
+          .region(region).build
+      }
     UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
   }
 
