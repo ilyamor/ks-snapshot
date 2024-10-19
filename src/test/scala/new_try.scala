@@ -1,4 +1,9 @@
 <<<<<<<< HEAD:src/test/scala/new_try.scala
+<<<<<<<< HEAD:src/test/scala/new_try.scala
+========
+package io.ilyamor.ks
+
+>>>>>>>> b21b472 (move to sub package):src/main/scala/io/ilyamor/ks/new_try.scala
 ========
 package io.ilyamor.ks
 
