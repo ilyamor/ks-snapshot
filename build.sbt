@@ -44,8 +44,6 @@ Compile / run := Defaults.runTask(Compile / fullClasspath,
 Compile / run / fork := true
 Global / cancelable := true
 
-// exclude Scala library from assembly
-
 libraryDependencies ++= Seq(
   "org.apache.kafka" %% "kafka-streams-scala" % "3.8.0" % Provided, // should be provided
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
@@ -67,17 +65,6 @@ libraryDependencies ++= Seq(
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
 
-// Add resolvers for releases and snapshots
-val user = sys.env.getOrElse("JFROG_USER", "ilya.m@coralogix.com")
-//val email = if (user.contains('@')) user else user + "@coralogix.com"
-val pass = sys.env.getOrElse("JFROG_PASSWORD", "AKCp8jR7C3LUkAi3QTrLK9kZ33MAfQsJjAtvVQQH2yRWsm73GP9gDFbFivVG65nNkQXHXePLJ")
-
-
-resolvers ++= Seq(
-  "Private Artifactory SBT resolver" at "https://cgx.jfrog.io/artifactory/virtual.sbt.coralogix.net",
-  "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
-)
-publishMavenStyle := true
-publishTo         := Some(
-  "coralogix-jfrog" at "https://cgx.jfrog.io/artifactory/maven"
+lazy val root = (project in file(".")).settings(
+  name := "ks-snapshot"
 )
