@@ -1,4 +1,26 @@
 ThisBuild / version := "0.1.4"
+ThisBuild / versionScheme := Some("early-semver")
+ThisBuild / organization := "io.ilyamor"
+ThisBuild / organizationName := "ks-snapshot"
+
+ThisBuild / scmInfo := Some(
+  ScmInfo(
+    url("https://github.com/ilyamor/ks-snapshot/"),
+    "scm:git@github.com:ilyamor/ks-snapshot.git"
+  )
+)
+
+// Remove all additional repository other than Maven Central from POM
+ThisBuild / pomIncludeRepository := { _ => false }
+
+ThisBuild / publishTo := {
+  // For accounts created after Feb 2021:
+  // val nexus = "https://s01.oss.sonatype.org/"
+  val nexus = "https://oss.sonatype.org/"
+  Some("releases" at nexus + "service/local/staging/deploy/maven2")
+}
+
+ThisBuild / publishMavenStyle := true
 
 ThisBuild / scalaVersion := "2.13.14"
 val versions = new {
@@ -10,6 +32,7 @@ val versions = new {
 }
 name := "ks-snapshot"
 organization := "io.ilyamor"
+
 assembly / mainClass := Some("io.ilyamor.ks-snapshot")
 
 // make run command include the provided dependencies
