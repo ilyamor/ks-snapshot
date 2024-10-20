@@ -23,6 +23,7 @@ ThisBuild / publishTo := {
 ThisBuild / publishMavenStyle := true
 
 ThisBuild / scalaVersion := "2.13.14"
+
 val versions = new {
   val circe = "0.14.4"
   val testContainers = "1.20.2"
@@ -32,8 +33,6 @@ val versions = new {
 }
 name := "ks-snapshot"
 organization := "io.ilyamor"
-
-assembly / mainClass := Some("io.ilyamor.ks-snapshot")
 
 // make run command include the provided dependencies
 Compile / run := Defaults.runTask(Compile / fullClasspath,
