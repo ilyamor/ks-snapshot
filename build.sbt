@@ -44,8 +44,6 @@ Compile / run := Defaults.runTask(Compile / fullClasspath,
 Compile / run / fork := true
 Global / cancelable := true
 
-// exclude Scala library from assembly
-
 libraryDependencies ++= Seq(
   "org.apache.kafka" %% "kafka-streams-scala" % "3.8.0", // should be provided
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
@@ -69,10 +67,6 @@ libraryDependencies ++= Seq(
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
 
-libraryDependencies += "software.amazon.awssdk" % "s3" % "2.28.16"
-//appache commons
-libraryDependencies += "org.apache.commons" % "commons-compress" % "1.26.1"
-libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.17.0"
-lazy val root = (project in file(".")).
-  settings(
-  )
+lazy val root = (project in file(".")).settings(
+  name := "ks-snapshot"
+)
