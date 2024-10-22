@@ -12,7 +12,8 @@ import org.apache.kafka.streams.state.WindowStore
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 import io.ilyamor.ks.utils.EitherOps.EitherOps
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_SNAPSHOT_FREQUENCY
+import org.apache.kafka.common.config.ConfigDef.Range.atLeast
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_SNAPSHOT_FREQUENCY_SECONDS
 
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
@@ -49,7 +50,9 @@ object StateStoreToS3 extends Logging {
       val taskStore: ConcurrentHashMap[TppStore, Boolean] = new ConcurrentHashMap[TppStore, Boolean]()
       val standby: ConcurrentHashMap[TppStore, Boolean] = new ConcurrentHashMap[TppStore, Boolean]()
 
-      val workingFlush: ConcurrentHashMap[TppStore, Boolean] = new ConcurrentHashMap[TppStore, Boolean]()
+      val workingFlush: ConcurrentHashMap[TppStore, FlushingState] = new ConcurrentHashMap[TppStore, FlushingState]()
+
+      case class FlushingState(inWork: Boolean, lastFlush: Long)
 
       override def onRestoreStart(topicPartition: TopicPartition, storeName: String, startingOffset: Long, endingOffset: Long): Unit = {
         println(Thread.currentThread() + "before restore topic" + topicPartition + " store " + storeName)
@@ -110,16 +113,13 @@ object StateStoreToS3 extends Logging {
               (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, config: S3StateStoreConfig, segmentFetcher: T => List[RocksDB])
       extends RocksDBWindowStore(wrapped, retainDuplicates, windowSize) with Logging {
 
-    var snapshotFrequency:Int = _
     var context: StateStoreContext = _
     var snapshoter: Snapshoter[S, T] = _
     val snapshotStoreListener: SnapshotStoreListeners.SnapshotStoreListener.type = SnapshotStoreListeners.SnapshotStoreListener
 
     override def init(context: StateStoreContext, root: StateStore): Unit = {
       this.context = context
-      // this.root = root
 
-      this.snapshotFrequency = Option(config.getString(STATE_SNAPSHOT_FREQUENCY)).getOrElse("20").toInt
       val s3ClientWrapper = UploadS3ClientForStore(
         config, s"${context.applicationId()}/${context.taskId()}/${name()}"
       )
@@ -130,7 +130,8 @@ object StateStoreToS3 extends Logging {
         context = context.asInstanceOf[ProcessorContextImpl],
         storeName = name(),
         underlyingStore = underlyingStore,
-        segmentFetcher = segmentFetcher
+        segmentFetcher = segmentFetcher,
+        config = config
       )
       snapshoter.initFromSnapshot()
       Try {
@@ -142,7 +143,7 @@ object StateStoreToS3 extends Logging {
 
     override def flush(): Unit = {
       super.flush()
-      snapshoter.flushSnapshot(snapshotFrequency)
+      snapshoter.flushSnapshot()
     }
 
     override def close(): Unit = {
@@ -157,15 +158,16 @@ object StateStoreToS3 extends Logging {
     def STATE_KEY_PREFIX = "state.s3.key.prefix"
     def STATE_REGION = "state.s3.region"
     def STATE_S3_ENDPOINT = "state.s3.endpoint"
-    def STATE_SNAPSHOT_FREQUENCY = "state.s3.snapshot.frequency"
+    def STATE_SNAPSHOT_FREQUENCY_SECONDS = "state.s3.snapshot.frequency.seconds"
 
     private def CONFIG = new ConfigDef()
       //.define(STATE_ENABLED, Type.BOOLEAN, false, Importance.MEDIUM, "")
-      .define(STATE_BUCKET, Type.STRING, "", Importance.MEDIUM, "")
-      .define(STATE_KEY_PREFIX, Type.STRING, "", Importance.LOW, "")
-      .define(STATE_REGION, Type.STRING, "", Importance.MEDIUM, "")
-      .define(STATE_S3_ENDPOINT, Type.STRING, "", Importance.LOW, "")
-      .define(STATE_S3_ENDPOINT, Type.STRING, "", Importance.LOW, "")
+      .define(STATE_BUCKET, Type.STRING, Importance.MEDIUM, "Defines S3 bucket to use to store state store. Required.")
+      .define(STATE_KEY_PREFIX, Type.STRING, "", Importance.LOW, "Defines some s3 bucket key prefix to store state store. Optional.")
+      .define(STATE_REGION, Type.STRING, Importance.MEDIUM, "Defines s3 region to use where to store state store. Required.")
+      .define(STATE_S3_ENDPOINT, Type.STRING, "", Importance.LOW, "Defines custom S3 endpoint (like MinIO). Optional.")
+      .define(STATE_SNAPSHOT_FREQUENCY_SECONDS, Type.LONG, 60L, atLeast(1), Importance.MEDIUM,
+        "Defines what is the frequency to flush state store in seconds. Default 60 seconds. Optional.")
 
 
     def apply(props: Properties): S3StateStoreConfig = {

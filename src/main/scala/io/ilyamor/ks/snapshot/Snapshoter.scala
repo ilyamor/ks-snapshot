@@ -2,6 +2,7 @@ package io.ilyamor.ks.snapshot
 
 import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, UploadS3ClientForStore}
 import io.ilyamor.ks.utils.EitherOps.EitherOps
+import io.ilyamor.ks.utils.ConcurrentMapOps.ConcurrentMapOps
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -9,6 +10,9 @@ import org.apache.commons.io.FileUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_SNAPSHOT_FREQUENCY_SECONDS
+import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.SnapshotStoreListener.FlushingState
 import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.{SnapshotStoreListener, TppStore}
 import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesStore, OffsetCheckpoint, Segment}
 import org.apache.logging.log4j.scala.Logging
@@ -31,14 +35,16 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
                                                                                      context: ProcessorContextImpl,
                                                                                      storeName: String,
                                                                                      underlyingStore: Store,
-                                                                                     segmentFetcher: Store => List[RocksDB]) extends Logging {
+                                                                                     segmentFetcher: Store => List[RocksDB],
+                                                                                     config: S3StateStoreConfig
+                                                                                   ) extends Logging {
 
   def initFromSnapshot() = {
     Fetcher.initFromSnapshot()
   }
 
-  def flushSnapshot(snapshotFrequency:Int) = {
-    Flusher.flushSnapshot(snapshotFrequency)
+  def flushSnapshot(): Unit = {
+    Flusher.flushSnapshot()
   }
 
   private object Fetcher {
@@ -237,7 +243,6 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     }
   }
 
-
   private object Flusher {
 
     def copyStorePathToTempDir(storePath: String): Path = {
@@ -248,21 +253,21 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
       newTempDirFile
     }
 
-    def flushSnapshot(snapshotFrequency:Int): Unit = {
+    def flushSnapshot(): Unit = {
       val stateDir = context.stateDir()
       val topic = context.changelogFor(storeName)
       val partition = context.taskId.partition()
       val tp = new TopicPartition(topic, partition)
 
+      val snapshotFrequencyMs = config.getLong(STATE_SNAPSHOT_FREQUENCY_SECONDS) * 1000;
 
       val tppStore = TppStore(tp, storeName)
       if (!snapshotStoreListener.taskStore.getOrDefault(tppStore, false)
-        && !snapshotStoreListener.workingFlush.getOrDefault(tppStore, false)
+        && !snapshotStoreListener.workingFlush.availableForWork(tppStore, System.currentTimeMillis(), snapshotFrequencyMs)
         && !snapshotStoreListener.standby.getOrDefault(tppStore, false)) {
         val sourceTopic = Option(Try(context.topic()).toOption).flatten
         val offset = Option(context.recordCollector())
           .flatMap(collector => Option(collector.offsets().get(tp)))
-        if (offset.isDefined && sourceTopic.isDefined && Random.nextInt(snapshotFrequency) == 0) {
 
           val time = currentTimeMillis()
           val segments = segmentFetcher(underlyingStore)
@@ -280,7 +285,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
           println("continue took: " + (currentTimeMillis() - time2))
 
           Future {
-            snapshotStoreListener.workingFlush.put(tppStore, true)
+            snapshotStoreListener.workingFlush.put(tppStore, FlushingState(inWork = true, System.currentTimeMillis()))
             logger.info(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
 
             val stateStore: StateStore = context.stateManager().getStore(storeName)
@@ -297,10 +302,8 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
               .tap(
                 e => logger.error(s"Error while uploading state store: $e", e),
                 files => logger.info(s"Successfully uploaded state store: $files"))
-            snapshotStoreListener.workingFlush.put(tppStore, false)
+            snapshotStoreListener.workingFlush.put(tppStore, FlushingState(inWork = false, System.currentTimeMillis()))
           }(scala.concurrent.ExecutionContext.global)
-        }
-
       }
     }
 
