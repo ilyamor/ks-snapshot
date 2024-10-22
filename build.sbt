@@ -1,7 +1,5 @@
 ThisBuild / version := "0.1.4"
 ThisBuild / versionScheme := Some("early-semver")
-ThisBuild / organization := "io.ilyamor"
-ThisBuild / organizationName := "ks-snapshot"
 
 ThisBuild / scmInfo := Some(
   ScmInfo(
@@ -13,11 +11,14 @@ ThisBuild / scmInfo := Some(
 // Remove all additional repository other than Maven Central from POM
 ThisBuild / pomIncludeRepository := { _ => false }
 
+credentials += Credentials(Path.userHome / ".sbt" / "sonatype_credentials_s01")
+
 ThisBuild / publishTo := {
   // For accounts created after Feb 2021:
-  // val nexus = "https://s01.oss.sonatype.org/"
-  val nexus = "https://oss.sonatype.org/"
-  Some("releases" at nexus + "service/local/staging/deploy/maven2")
+  val nexus = "https://s01.oss.sonatype.org/"
+  //val nexus = "https://oss.sonatype.org/"
+  if (isSnapshot.value) Some("snapshots" at nexus + "content/repositories/snapshots")
+  else Some("releases" at nexus + "service/local/staging/deploy/maven2")
 }
 
 ThisBuild / publishMavenStyle := true
@@ -32,7 +33,7 @@ val versions = new {
   val jackson = "2.17.2"
 }
 name := "ks-snapshot"
-organization := "io.ilyamor"
+organization := "io.github.ilyamor"
 
 // make run command include the provided dependencies
 Compile / run := Defaults.runTask(Compile / fullClasspath,
@@ -64,7 +65,4 @@ libraryDependencies ++= Seq(
   "org.testcontainers" % "minio" % versions.testContainers % Test,
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
-
-lazy val root = (project in file(".")).settings(
-  name := "ks-snapshot"
-)
+lazy val root = (project in file(".")).settings()
