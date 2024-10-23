@@ -13,7 +13,6 @@ import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 import io.ilyamor.ks.utils.EitherOps.EitherOps
 import org.apache.kafka.common.config.ConfigDef.Range.atLeast
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_SNAPSHOT_FREQUENCY_SECONDS
 
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
@@ -159,6 +158,7 @@ object StateStoreToS3 extends Logging {
     def STATE_REGION = "state.s3.region"
     def STATE_S3_ENDPOINT = "state.s3.endpoint"
     def STATE_SNAPSHOT_FREQUENCY_SECONDS = "state.s3.snapshot.frequency.seconds"
+    def STATE_OFFSET_THRESHOLD = "state.s3.offset.threshold"
 
     private def CONFIG = new ConfigDef()
       //.define(STATE_ENABLED, Type.BOOLEAN, false, Importance.MEDIUM, "")
@@ -168,6 +168,8 @@ object StateStoreToS3 extends Logging {
       .define(STATE_S3_ENDPOINT, Type.STRING, "", Importance.LOW, "Defines custom S3 endpoint (like MinIO). Optional.")
       .define(STATE_SNAPSHOT_FREQUENCY_SECONDS, Type.LONG, 60L, atLeast(1), Importance.MEDIUM,
         "Defines what is the frequency to flush state store in seconds. Default 60 seconds. Optional.")
+      .define(STATE_OFFSET_THRESHOLD, Type.INT, 10000, atLeast(100), Importance.LOW,
+        "Defines what is the threshold to restore data from s3. If the value is less, than restoring from kafka. Should be grater than 100. Default 1000 Optional.")
 
 
     def apply(props: Properties): S3StateStoreConfig = {

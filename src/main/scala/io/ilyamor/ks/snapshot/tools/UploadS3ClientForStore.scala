@@ -21,9 +21,7 @@ import scala.util.{Try, Using}
 
 case class UploadS3ClientForStore private(client: S3Client, bucket: String, basePathS3: String) extends Logging {
   val CHECKPOINT = ".checkpoint"
-  val state = "state.tar.gz"
   val suffix = "tzr.gz"
-
 
   def getCheckpointFile(partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
     val rootPath = s"$applicationId/$partition/$storeName"
