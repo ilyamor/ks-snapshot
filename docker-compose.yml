@@ -66,4 +66,17 @@ services:
       timeout: 5s
       retries: 5
 
+  initialize-s3service:
+    image: quay.io/minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c '
+      /usr/bin/mc alias set s3service http://minio:9000 "minioadmin" "minioadmin";
+      /usr/bin/mc mb s3service/cx-snapshot-test;
+      /usr/bin/mc admin user add s3service "test" "testtest";
+      /usr/bin/mc admin policy attach s3service readwrite --user "test";
+      exit 0;
+      '
+
 # log-in into localhost:9001, create bucket "test", set access public
