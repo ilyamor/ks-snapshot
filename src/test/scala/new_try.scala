@@ -23,7 +23,7 @@ object GlobalStoresExample extends Logging {
 
   def main(args: Array[String]): Unit = {
     val bootstrapServers = if (args.length > 0) args(0)
-    else "localhost:9092"
+    else "localhost:29092"
     val schemaRegistryUrl = if (args.length > 1) args(1)
     else "http://localhost:8081"
     val streams = createStreams(bootstrapServers, schemaRegistryUrl, "/tmp/kafka-streams-global-stores")
@@ -59,9 +59,9 @@ object GlobalStoresExample extends Logging {
 
     streamsConfiguration.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers)
     streamsConfiguration.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, 18000)
-    streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, s"data${Random.nextInt(4)}")
+    //streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, s"data${Random.nextInt(4)}")
     //    streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, stateDir)
-    //streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, "data")
+    streamsConfiguration.put(StreamsConfig.STATE_DIR_CONFIG, "data")
     streamsConfiguration.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 0)
     streamsConfiguration.put(StreamsConfig.STATESTORE_CACHE_MAX_BYTES_CONFIG, 0)
 //    streamsConfiguration.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 0)
@@ -78,7 +78,7 @@ object GlobalStoresExample extends Logging {
     streamsConfiguration.put(S3StateStoreConfig.STATE_BUCKET, "cx-snapshot-test")
     streamsConfiguration.put(S3StateStoreConfig.STATE_REGION, Region.EU_NORTH_1.id)
     // should have leading slash
-    //streamsConfiguration.put(S3StateStoreConfig.STATE_S3_ENDPOINT, "http://localhost:9000/")
+    streamsConfiguration.put(S3StateStoreConfig.STATE_S3_ENDPOINT, "http://localhost:9000/")
 
     // Set to earliest so we don't miss any data that arrived in the topics before the process
     // started

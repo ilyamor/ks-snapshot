@@ -25,20 +25,18 @@ Global / cancelable := true
 // exclude Scala library from assembly
 
 libraryDependencies ++= Seq(
-  "org.apache.kafka" %% "kafka-streams-scala" % "3.8.0", // should be provided
+  "org.apache.kafka" %% "kafka-streams-scala" % "3.8.0" % Provided, // should be provided
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
   // Use the "provided" scope instead when the "compile-internal" scope is not supported
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % versions.jsoniterScala,
   "org.typelevel" %% "cats-core" % "2.12.0",
-
-  "io.micrometer" % "micrometer-core" % "1.13.6",
-  "org.apache.logging.log4j" %% "log4j-api-scala" % "13.1.0",
-  "org.apache.logging.log4j" % "log4j-core" % versions.log4j,
-  "org.apache.logging.log4j" % "log4j-slf4j-impl" % versions.log4j,
-  "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % versions.jackson % Runtime, // should be provided
-  "com.fasterxml.jackson.core" % "jackson-databind" % versions.jackson, // should be provided
+  "org.slf4j" % "slf4j-api" % "2.0.16" % Provided,
+  "org.apache.logging.log4j" %% "log4j-api-scala" % "13.1.0" % Provided,
+  "org.apache.logging.log4j" % "log4j-core" % versions.log4j % Provided,
+  "org.apache.logging.log4j" % "log4j-slf4j-impl" % versions.log4j % Provided,
+  "com.fasterxml.jackson.core" % "jackson-databind" % versions.jackson % Provided,
   "com.lmax" % "disruptor" % "3.4.4" % Runtime,
-  "software.amazon.awssdk" % "s3" % "2.28.16", // should be provided
+  "software.amazon.awssdk" % "s3" % "2.28.16" % Provided, // should be provided
   "org.apache.commons" % "commons-compress" % "1.26.1",
   "org.apache.commons" % "commons-lang3" % "3.17.0",
   "org.scalatest" %% "scalatest" % "3.2.19" % Test,

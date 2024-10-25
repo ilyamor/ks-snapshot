@@ -50,13 +50,15 @@ case class Archiver(outputFile: File, sourceDir: File, position: File)  extends 
     if (file.isFile) {
       val fis = new FileInputStream(file)
       val tarEntry = new TarArchiveEntry(file, entryName)
-      tarOs.putArchiveEntry(tarEntry)
+
       try {
+        tarOs.putArchiveEntry(tarEntry)
         logger.info(s"Archiving file ${file.getAbsolutePath} to ${tarEntry.getName}" )
         logger.info("file copy " + IOUtils.copy(fis, tarOs))
       } finally {
+        tarOs.flush()
+        //tarOs.closeArchiveEntry()
         fis.close()
-        tarOs.closeArchiveEntry()
       }
     } else if (file.isDirectory) {
       logger.info(s"Starting dir ${file.getAbsolutePath}/")

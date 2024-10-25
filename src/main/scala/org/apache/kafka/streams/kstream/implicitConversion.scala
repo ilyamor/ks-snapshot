@@ -42,8 +42,7 @@ object implicitConversion {
     override def windowStore(params: DslWindowParams): WindowBytesStoreSupplier = {
       val innerStore = innerSupplier.windowStore(params)
       if (params.emitStrategy.`type` eq EmitStrategy.StrategyType.ON_WINDOW_CLOSE) return RocksDbIndexedTimeOrderedWindowBytesStoreSupplier.create(params.name, params.retentionPeriod, params.windowSize, params.retainDuplicates, params.isSlidingWindow)
-      val streamProps = S3StateStoreConfig(props)
-      new WindowedSnapshotSupplier(innerStore.name(), innerStore.retentionPeriod(), innerStore.segmentIntervalMs(), innerStore.windowSize(), innerStore.retainDuplicates(), params.isTimestamped, streamProps)
+      new WindowedSnapshotSupplier(innerStore.name(), innerStore.retentionPeriod(), innerStore.segmentIntervalMs(), innerStore.windowSize(), innerStore.retainDuplicates(), params.isTimestamped, props)
     }
 
     override def sessionStore(params: DslSessionParams): SessionBytesStoreSupplier = {

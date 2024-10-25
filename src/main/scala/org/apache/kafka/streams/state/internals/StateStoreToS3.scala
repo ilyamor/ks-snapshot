@@ -1,11 +1,11 @@
 package org.apache.kafka.streams.state.internals
 
 import io.ilyamor.ks.snapshot.Snapshoter
-import io.ilyamor.ks.snapshot.tools.UploadS3ClientForStore
+import io.ilyamor.ks.snapshot.tools.{StorageUploader, UploadS3ClientForStore}
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.config.ConfigDef.{Importance, Type}
-import org.apache.kafka.common.config.{AbstractConfig, ConfigDef}
-import org.apache.kafka.common.utils.Bytes
+import org.apache.kafka.common.config.ConfigDef.{Importance, Type, Validator}
+import org.apache.kafka.common.config.{AbstractConfig, ConfigDef, ConfigException}
+import org.apache.kafka.common.utils.{Bytes, Utils}
 import org.apache.kafka.streams.processor._
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.state.WindowStore
@@ -13,6 +13,7 @@ import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 import io.ilyamor.ks.utils.EitherOps.EitherOps
 import org.apache.kafka.common.config.ConfigDef.Range.atLeast
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_STORAGE_UPLOADER
 
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
@@ -87,7 +88,7 @@ object StateStoreToS3 extends Logging {
                                  windowSize: Long,
                                  retainDuplicates: Boolean,
                                  returnTimestampedStore: Boolean,
-                                 streamProps: S3StateStoreConfig
+                                 props: Properties
       ) extends RocksDbWindowBytesStoreSupplier(name, retentionPeriod, segmentInterval, windowSize, retainDuplicates, returnTimestampedStore) {
 
     private val windowStoreType = if (returnTimestampedStore) RocksDbWindowBytesStoreSupplier.WindowStoreTypes.TIMESTAMPED_WINDOW_STORE else RocksDbWindowBytesStoreSupplier.WindowStoreTypes.DEFAULT_WINDOW_STORE
@@ -97,35 +98,37 @@ object StateStoreToS3 extends Logging {
         case RocksDbWindowBytesStoreSupplier.WindowStoreTypes.DEFAULT_WINDOW_STORE =>
           new S3StateSegmentedStateStore[RocksDBSegmentedBytesStore, KeyValueSegment](
             new RocksDBSegmentedBytesStore(name, metricsScope, retentionPeriod, segmentInterval, new WindowKeySchema),
-            retainDuplicates, windowSize, streamProps, { store: RocksDBSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
+            retainDuplicates, windowSize, props, { store: RocksDBSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
           )
         case RocksDbWindowBytesStoreSupplier.WindowStoreTypes.TIMESTAMPED_WINDOW_STORE =>
           new S3StateSegmentedStateStore[RocksDBTimestampedSegmentedBytesStore, TimestampedSegment](
             new RocksDBTimestampedSegmentedBytesStore(name, metricsScope, retentionPeriod, segmentInterval, new WindowKeySchema),
-            retainDuplicates, windowSize, streamProps, { store: RocksDBTimestampedSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
+            retainDuplicates, windowSize, props, { store: RocksDBTimestampedSegmentedBytesStore => store.getSegments.asScala.map(_.db).toList }
           )
       }
     }
   }
 
   class S3StateSegmentedStateStore[T <: AbstractRocksDBSegmentedBytesStore[S], S <: Segment]
-              (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, config: S3StateStoreConfig, segmentFetcher: T => List[RocksDB])
+              (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, props: Properties, segmentFetcher: T => List[RocksDB])
       extends RocksDBWindowStore(wrapped, retainDuplicates, windowSize) with Logging {
 
-    var context: StateStoreContext = _
     var snapshoter: Snapshoter[S, T] = _
-    val snapshotStoreListener: SnapshotStoreListeners.SnapshotStoreListener.type = SnapshotStoreListeners.SnapshotStoreListener
 
     override def init(context: StateStoreContext, root: StateStore): Unit = {
-      this.context = context
 
-      val s3ClientWrapper = UploadS3ClientForStore(
-        config, s"${context.applicationId()}/${context.taskId()}/${name()}"
-      )
+      val prefixKey = s"${context.applicationId()}/${context.taskId()}/${name()}"
+
+      val config = S3StateStoreConfig(props)
+
+      val storageClientUploader =
+        Utils.newInstance(config.getClass(STATE_STORAGE_UPLOADER), classOf[StorageUploader])
+          .configure(props, prefixKey)
+
       val underlyingStore = this.wrapped.asInstanceOf[T]
       this.snapshoter = Snapshoter(
-        snapshotStoreListener = snapshotStoreListener,
-        s3ClientForStore = s3ClientWrapper,
+        snapshotStoreListener = SnapshotStoreListeners.SnapshotStoreListener,
+        storageClientForStore = storageClientUploader,
         context = context.asInstanceOf[ProcessorContextImpl],
         storeName = name(),
         underlyingStore = underlyingStore,
@@ -159,6 +162,7 @@ object StateStoreToS3 extends Logging {
     def STATE_S3_ENDPOINT = "state.s3.endpoint"
     def STATE_SNAPSHOT_FREQUENCY_SECONDS = "state.s3.snapshot.frequency.seconds"
     def STATE_OFFSET_THRESHOLD = "state.s3.offset.threshold"
+    def STATE_STORAGE_UPLOADER = "state.s3.storage.uploader"
 
     private def CONFIG = new ConfigDef()
       //.define(STATE_ENABLED, Type.BOOLEAN, false, Importance.MEDIUM, "")
@@ -170,7 +174,14 @@ object StateStoreToS3 extends Logging {
         "Defines what is the frequency to flush state store in seconds. Default 60 seconds. Optional.")
       .define(STATE_OFFSET_THRESHOLD, Type.INT, 10000, atLeast(100), Importance.LOW,
         "Defines what is the threshold to restore data from s3. If the value is less, than restoring from kafka. Should be grater than 100. Default 1000 Optional.")
-
+      .define(STATE_STORAGE_UPLOADER, Type.CLASS, classOf[UploadS3ClientForStore], new Validator {
+        override def ensureValid(name: String, value: Any): Unit = {
+          value match {
+            case c: Class[Any] if c.isInstanceOf[Class[StorageUploader]] => {}
+            case _ => throw new ConfigException(s"Value $value for config $name should be subclass of ${StorageUploader.getClass.getName}")
+          }
+        }
+      } , Importance.LOW, "Defines class to use for upload data to storage. Should implements StorageUploader trait and should have empty constructor")
 
     def apply(props: Properties): S3StateStoreConfig = {
       new S3StateStoreConfig(CONFIG, props.asInstanceOf[java.util.Map[Any, Any]])
