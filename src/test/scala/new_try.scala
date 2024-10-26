@@ -1,13 +1,3 @@
-<<<<<<<< HEAD:src/test/scala/new_try.scala
-<<<<<<<< HEAD:src/test/scala/new_try.scala
-========
-package io.ilyamor.ks
-
->>>>>>>> b21b472 (move to sub package):src/main/scala/io/ilyamor/ks/new_try.scala
-========
-package io.ilyamor.ks
-
->>>>>>>> b21b472 (move to sub package):src/main/scala/io/ilyamor/ks/new_try.scala
 import io.ilyamor.ks.snapshot.StoreFactory.KStreamOps
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.Serdes
@@ -26,8 +16,6 @@ import java.time.Duration
 import java.util
 import java.util.Properties
 import scala.util.Random
-
-import io.ilyamor.ks.utils.EitherOps
 
 object GlobalStoresExample extends Logging {
 

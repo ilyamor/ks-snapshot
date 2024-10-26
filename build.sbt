@@ -1,5 +1,8 @@
-ThisBuild / version := "0.1.4"
+ThisBuild / version := "0.1.10"
 ThisBuild / versionScheme := Some("early-semver")
+ThisBuild / organization := "io.github.ilyamor"
+ThisBuild / organizationName := "ks-snapshot"
+ThisBuild / organizationHomepage := Some(url("https://github.com/ilyamor/ks-snapshot/"))
 
 ThisBuild / scmInfo := Some(
   ScmInfo(
@@ -7,6 +10,26 @@ ThisBuild / scmInfo := Some(
     "scm:git@github.com:ilyamor/ks-snapshot.git"
   )
 )
+
+ThisBuild / developers := List(
+  Developer(
+    id = "ilyamor",
+    name = "ilyamor",
+    email = "ilyamor12@gmail.com",
+    url = url("https://github.com/ilyamor/")
+  ),
+  Developer(
+    id = "grinfeld",
+    name = "grinfeld",
+    email = "grinfeld@gmail.com",
+    url = url("https://github.com/grinfeld/")
+  )
+)
+
+ThisBuild / licenses := List(
+  "Apache 2" -> new URL("http://www.apache.org/licenses/LICENSE-2.0.txt")
+)
+ThisBuild / homepage := Some(url("https://github.com/ilyamor/ks-snapshot/"))
 
 // Remove all additional repository other than Maven Central from POM
 ThisBuild / pomIncludeRepository := { _ => false }
@@ -35,16 +58,6 @@ val versions = new {
 name := "ks-snapshot"
 organization := "io.github.ilyamor"
 
-// make run command include the provided dependencies
-Compile / run := Defaults.runTask(Compile / fullClasspath,
-  Compile / run / mainClass,
-  Compile / run / runner
-).evaluated
-
-// stays inside the sbt console when we press "ctrl-c" while a Flink programme executes with "run" or "runMain"
-Compile / run / fork := true
-Global / cancelable := true
-
 libraryDependencies ++= Seq(
   "org.apache.kafka" %% "kafka-streams-scala" % "3.8.0" % Provided, // should be provided
   "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-core" % versions.jsoniterScala,
@@ -65,4 +78,7 @@ libraryDependencies ++= Seq(
   "org.testcontainers" % "minio" % versions.testContainers % Test,
   "io.minio" % "minio-admin" % "8.5.12" % Test
 )
-lazy val root = (project in file(".")).settings()
+
+lazy val root = (project in file(".")).settings(
+  name := "ks-snapshot"
+)
