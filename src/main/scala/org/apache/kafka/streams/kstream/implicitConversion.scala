@@ -18,7 +18,7 @@ object implicitConversion {
                                                                  props: Properties
                                                                 ): Materialized[K, V, S] = {
     val materialized = Materialized.`with`[K, V, S](keySerde, valueSerde)
-    if (props.getProperty(S3StateStoreConfig.STATE_ENABLED) == "true") {
+    if (S3StateStoreConfig(props).getBoolean(S3StateStoreConfig.STATE_ENABLED)) {
       if (materialized.dslStoreSuppliers == null)
         materialized.dslStoreSuppliers = Utils.newInstance(classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers], classOf[DslStoreSuppliers])
       materialized.dslStoreSuppliers = new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
@@ -29,7 +29,7 @@ object implicitConversion {
 
   implicit class SnapshotMaterialized[K, V, S <: StateStore](materialized: Materialized[K, V, S]) {
     def withSnapshotEnabled(implicit props: Properties): Materialized[K, V, S] = {
-      if (props.getProperty(S3StateStoreConfig.STATE_ENABLED) == "true") {
+      if (S3StateStoreConfig(props).getBoolean(S3StateStoreConfig.STATE_ENABLED)) {
         if (materialized.dslStoreSuppliers == null)
           materialized.dslStoreSuppliers = Utils.newInstance(classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers], classOf[DslStoreSuppliers])
         materialized.dslStoreSuppliers = new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)

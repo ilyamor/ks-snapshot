@@ -1,5 +1,7 @@
 package io.ilyamor.ks.snapshot
 
+import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, StorageUploader}
+import io.ilyamor.ks.utils.ConcurrentMapOps.ConcurrentMapOps
 import io.ilyamor.ks.utils.EitherOps.EitherOps
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -18,14 +20,17 @@ import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesSt
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 
+import java.io.{File, FileOutputStream, InputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
 import java.nio.file.{Files, Path}
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
+import scala.util.Try
 
 case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
                                                                                      snapshotStoreListener: SnapshotStoreListener.type,
+                                                                                     storageClientForStore: StorageUploader,
                                                                                      context: ProcessorContextImpl,
                                                                                      storeName: String,
                                                                                      underlyingStore: Store,
@@ -55,10 +60,10 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     Fetcher.initFromSnapshot()
   }
 
-  def flushSnapshot(snapshotFrequency:Int) = {
+  def flushSnapshot() = {
     Flusher.flushSnapshot()
 
-    }
+  }
 
   private object Fetcher {
 
@@ -152,16 +157,16 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
             withLatencyMetrics(downloadStateSensor, () =>
               storageClientForStore.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
             )
-            .tapError(e => {
-              downloadStateErrorSensor.record()
-              logger.error(s"Error while fetching remote state store: $e", e)
-            })
-            .tapError(e => throw e)
-            .map((response: InputStream) => {
-              val destDir = s"${context.stateDir.getAbsolutePath}"
-              withLatencyMetrics(extractStateSensor, () => extractAndDecompress(destDir, response))
-                .tapError(_ => extractStateErrorSensor.record())
-            })
+              .tapError(e => {
+                downloadStateErrorSensor.record()
+                logger.error(s"Error while fetching remote state store: $e", e)
+              })
+              .tapError(e => throw e)
+              .map((response: InputStream) => {
+                val destDir = s"${context.stateDir.getAbsolutePath}"
+                withLatencyMetrics(extractStateSensor, () => extractAndDecompress(destDir, response))
+                  .tapError(_ => extractStateErrorSensor.record())
+              })
 
           case None =>
             logger.error("remote checkpoint file is offsets is empty")
@@ -275,7 +280,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     def copyStorePathToTempDir(storePath: String): Path = {
       val storeDir = new File(storePath)
       val newTempDir = Files.createTempDirectory(s"${storeDir.getName}").toAbsolutePath
-      val newTempDirFile = Files.createDirectory(Path.of(newTempDir.toAbsolutePath+ "/" + storeName))
+      val newTempDirFile = Files.createDirectory(Path.of(newTempDir.toAbsolutePath + "/" + storeName))
       FileUtils.copyDirectory(storeDir, newTempDirFile.toFile)
       newTempDirFile
     }
@@ -309,37 +314,37 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
             paths
           })
 
-        val stateStore: StateStore = context.stateManager().getStore(storeName)
-        val stateStorePositions = stateStore.getPosition
-        if (!stateStorePositions.isEmpty) {
-          Future {
-            logger.debug(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
-            val positions: Map[TopicPartition, lang.Long] = stateStorePositions.getPartitionPositions(context.topic())
-              .asScala.map(tp => (new TopicPartition(sourceTopic.get, tp._1), tp._2)).toMap
-            snapshotStoreListener.workingFlush.put(tppStore, FlushingState(inWork = true, currentTimeMillis()))
-            withLatencyMetrics(flushStoreSensor, () => {
-              val files = for {
-                positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
-                archivedFile <- withLatencyMetrics(archiveSensor,
-                  () => Archiver(tempDir.toFile, offset.get, new File(s"${path.toAbsolutePath}"), positionFile).archive()
-                ).tapError(_ => archiveErrorSensor.record())
-                checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
-                uploadResultQuarto <- withLatencyMetrics(uploadStoreSensor, () =>  storageClientForStore.uploadStateStore(archivedFile, checkpointFile))
-                  .tapError(_ => uploadStoreErrorSensor.record())
-              } yield uploadResultQuarto
-              files
-                .tap(
-                  e =>
-                    logger.error(s"Error while uploading state store: $e", e),
-                  files => logger.debug(s"Successfully uploaded state store: $files"))
-            })
-            snapshotStoreListener.workingFlush.put(tppStore, FlushingState(inWork = false, System.currentTimeMillis()))
-          }(scala.concurrent.ExecutionContext.global)
+          val stateStore: StateStore = context.stateManager().getStore(storeName)
+          val stateStorePositions = stateStore.getPosition
+          if (!stateStorePositions.isEmpty) {
+            Future {
+              logger.debug(s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset)
+              val positions: Map[TopicPartition, lang.Long] = stateStorePositions.getPartitionPositions(context.topic())
+                .asScala.map(tp => (new TopicPartition(sourceTopic.get, tp._1), tp._2)).toMap
+              snapshotStoreListener.workingFlush.put(tppStore, FlushingState(inWork = true, currentTimeMillis()))
+              withLatencyMetrics(flushStoreSensor, () => {
+                val files = for {
+                  positionFile <- CheckPointCreator.create(tempDir.toFile, s"$storeName.position", positions).write()
+                  archivedFile <- withLatencyMetrics(archiveSensor,
+                    () => Archiver(tempDir.toFile, offset.get, new File(s"${path.toAbsolutePath}"), positionFile).archive()
+                  ).tapError(_ => archiveErrorSensor.record())
+                  checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
+                  uploadResultQuarto <- withLatencyMetrics(uploadStoreSensor, () => storageClientForStore.uploadStateStore(archivedFile, checkpointFile))
+                    .tapError(_ => uploadStoreErrorSensor.record())
+                } yield uploadResultQuarto
+                files
+                  .tap(
+                    e =>
+                      logger.error(s"Error while uploading state store: $e", e),
+                    files => logger.debug(s"Successfully uploaded state store: $files"))
+              })
+              snapshotStoreListener.workingFlush.put(tppStore, FlushingState(inWork = false, System.currentTimeMillis()))
+            }(scala.concurrent.ExecutionContext.global)
+          }
         }
       }
+
     }
-
-    println()
   }
-
 }
+

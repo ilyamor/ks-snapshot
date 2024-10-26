@@ -203,6 +203,7 @@ class StamTest extends AnyFlatSpec with BeforeAndAfter with Logging with BeforeA
     streamsConfiguration.put(S3StateStoreConfig.STATE_REGION, Region.US_EAST_1.id)
     // should have leading slash
     streamsConfiguration.put(S3StateStoreConfig.STATE_S3_ENDPOINT, minioUrl+"/")
+    streamsConfiguration.put(S3StateStoreConfig.STATE_ENABLED, true)
     streamsConfiguration
   }
 
