@@ -8,14 +8,20 @@ import org.apache.kafka.streams.scala.kstream.Materialized
 import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.SnapshotStoreListener
 
 import java.util.Properties
+import java.util.concurrent.atomic.AtomicBoolean
 
 object StoreFactory {
 
   implicit class KStreamOps(stream: KafkaStreams) {
-    def enableS3Snapshot(): Unit = {
-      stream.setGlobalStateRestoreListener(SnapshotStoreListener)
-      stream.setStandbyUpdateListener(SnapshotStoreListener)
-      SnapshotStoreListener.enable()
+    private lazy val done: AtomicBoolean = new AtomicBoolean(true)
+    def enableS3Snapshot(): KafkaStreams = {
+      // we want this operation to make only once
+      if (done.getAndSet(false)) {
+        stream.setGlobalStateRestoreListener(SnapshotStoreListener)
+        stream.setStandbyUpdateListener(SnapshotStoreListener)
+        SnapshotStoreListener.enable()
+      }
+      stream
     }
   }
 }

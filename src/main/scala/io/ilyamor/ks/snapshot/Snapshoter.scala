@@ -1,6 +1,6 @@
 package io.ilyamor.ks.snapshot
 
-import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, UploadS3ClientForStore}
+import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, StorageUploader, UploadS3ClientForStoreInner}
 import io.ilyamor.ks.utils.EitherOps.EitherOps
 import io.ilyamor.ks.utils.ConcurrentMapOps.ConcurrentMapOps
 import org.apache.commons.compress.archivers.ArchiveEntry
@@ -19,10 +19,8 @@ import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreList
 import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesStore, OffsetCheckpoint, Segment}
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
-import software.amazon.awssdk.core.ResponseInputStream
-import software.amazon.awssdk.services.s3.model.GetObjectResponse
 
-import java.io.{File, FileOutputStream}
+import java.io.{File, FileOutputStream, InputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
 import java.nio.file.{Files, Path}
@@ -31,7 +29,7 @@ import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
 import scala.util.Try
 
 case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
-                                                                                     s3ClientForStore: UploadS3ClientForStore,
+                                                                                     storageClientForStore: StorageUploader,
                                                                                      snapshotStoreListener: SnapshotStoreListener.type,
                                                                                      context: ProcessorContextImpl,
                                                                                      storeName: String,
@@ -156,14 +154,14 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
         localCheckPointFile.read().asScala.values.headOption match {
           case Some(offset) =>
             withLatencyMetrics(downloadStateSensor, () =>
-              s3ClientForStore.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
+              storageClientForStore.getStateStores(context.taskId.toString, storeName, context.applicationId(), offset.toString)
             )
             .tapError(e => {
               downloadStateErrorSensor.record()
               logger.error(s"Error while fetching remote state store: $e", e)
             })
             .tapError(e => throw e)
-            .map((response: ResponseInputStream[GetObjectResponse]) => {
+            .map((response: InputStream) => {
               val destDir = s"${context.stateDir.getAbsolutePath}"
               withLatencyMetrics(extractStateSensor, () => extractAndDecompress(destDir, response))
                 .tapError(_ => extractStateErrorSensor.record())
@@ -231,11 +229,11 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
 
   private def fetchRemoteCheckPointFile(context: StateStoreContext): Either[Throwable, OffsetCheckpoint] = {
     withLatencyMetrics(downloadCheckpointSensor,
-      () => s3ClientForStore.getCheckpointFile(context.taskId.toString, storeName, context.applicationId())
+      () => storageClientForStore.getCheckpointFile(context.taskId.toString, storeName, context.applicationId())
     ).tapError(e => logger.error(s"Error while fetching remote checkpoint: $e"))
   }
 
-  private def extractAndDecompress(destDir: String, response: ResponseInputStream[GetObjectResponse]): Either[Throwable, Unit] = {
+  private def extractAndDecompress(destDir: String, response: InputStream): Either[Throwable, Unit] = {
     Try {
       val gzipInputStream = new GzipCompressorInputStream(response)
       val tarInputStream = new TarArchiveInputStream(gzipInputStream)
@@ -329,7 +327,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
                   () => Archiver(tempDir.toFile, offset.get, new File(s"${path.toAbsolutePath}"), positionFile).archive()
                 ).tapError(_ => archiveErrorSensor.record())
                 checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
-                uploadResultQuarto <- withLatencyMetrics(uploadStoreSensor, () =>  s3ClientForStore.uploadStateStore(archivedFile, checkpointFile))
+                uploadResultQuarto <- withLatencyMetrics(uploadStoreSensor, () =>  storageClientForStore.uploadStateStore(archivedFile, checkpointFile))
                   .tapError(_ => uploadStoreErrorSensor.record())
               } yield uploadResultQuarto
               files

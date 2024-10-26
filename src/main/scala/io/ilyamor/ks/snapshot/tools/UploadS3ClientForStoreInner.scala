@@ -2,7 +2,7 @@ package io.ilyamor.ks.snapshot.tools
 
 import org.apache.kafka.streams.state.internals.OffsetCheckpoint
 import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_KEY_PREFIX
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{STATE_BUCKET, STATE_KEY_PREFIX}
 import org.apache.logging.log4j.scala.Logging
 import software.amazon.awssdk.core.ResponseInputStream
 import software.amazon.awssdk.core.sync.RequestBody
@@ -12,16 +12,57 @@ import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.endpoints.{S3EndpointParams, S3EndpointProvider}
 import software.amazon.awssdk.services.s3.model._
 
-import java.io.{File, FileOutputStream, RandomAccessFile}
+import java.io.{File, FileOutputStream, InputStream, RandomAccessFile}
 import java.net.URI
 import java.nio.ByteBuffer
 import java.util
+import java.util.Properties
 import java.util.concurrent.CompletableFuture
 import scala.util.{Try, Using}
 
-case class UploadS3ClientForStore private(client: S3Client, bucket: String, basePathS3: String) extends Logging {
+case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, storeKey: String) extends StorageUploader with Logging {
   val CHECKPOINT = ".checkpoint"
   val suffix = "tzr.gz"
+
+  lazy val client: S3Client = buildClient()
+  lazy val bucket: String = config.getString(STATE_BUCKET)
+  lazy val basePathS3: String = buildPath(config.getString(STATE_KEY_PREFIX), storeKey)
+
+  private def buildPath(parts: Any*): String = {
+    parts
+      .map(an => an.toString)
+      .filter(s => !s.isBlank)
+      .map(str => removeEndSlash(str))
+      .mkString("/")
+  }
+
+  private def removeEndSlash(str: String): String = {
+    val stripped = str.strip()
+    if (stripped.endsWith("/")) stripped.substring(0, stripped.length - 1) else stripped
+  }
+
+  private def buildClient(): S3Client = {
+    val region = Region.of(config.getString(S3StateStoreConfig.STATE_REGION))
+    val endPoint = if (config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT).endsWith("/"))
+      config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT) else config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT) + "/"
+
+    val client: S3Client =
+      if (endPoint.isBlank) {
+        S3Client.builder.region(region).build
+      } else {
+        S3Client.builder
+          .endpointOverride(new URI(endPoint))
+          .endpointProvider(new S3EndpointProvider {
+            override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
+              CompletableFuture.completedFuture(Endpoint.builder()
+                .url(URI.create(endPoint + endpointParams.bucket()))
+                .build());
+            }
+          })
+          .region(region).build
+      }
+    client
+  }
 
   def getCheckpointFile(partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] = {
     val rootPath = s"$applicationId/$partition/$storeName"
@@ -40,7 +81,7 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
       .toEither
   }
 
-  def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, ResponseInputStream[GetObjectResponse]] = {
+  def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, InputStream] = {
     val rootPath = s"$applicationId/$partition/$storeName"
     val stateFileCompressed = s"$rootPath/$offset.$suffix"
     logger.info(s"Fetching state store from $stateFileCompressed")
@@ -107,50 +148,23 @@ case class UploadS3ClientForStore private(client: S3Client, bucket: String, base
     } finally if (file != null) file.close()
     completedParts
   }
+
+  override def configure(params: Properties, storeName: String): StorageUploader = this
 }
 
-object UploadS3ClientForStore {
-  def apply(config: S3StateStoreConfig, storeName: String): UploadS3ClientForStore = {
+// inner class with empty constructor to enable creation via Kafka's reflection. It will call `configure` method
+// and it will create actual
+class UploadS3ClientForStore extends StorageUploader {
 
-    val bucket = config.getString(S3StateStoreConfig.STATE_BUCKET)
-    val prefix = config.getString(STATE_KEY_PREFIX)
-    val region = Region.of(config.getString(S3StateStoreConfig.STATE_REGION))
-    val endPoint = if (config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT).endsWith("/"))
-      config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT) else config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT)
+  override def getCheckpointFile(partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] =
+    throw new UnsupportedOperationException()
 
-    val client: S3Client =
-      if (endPoint.isBlank) {
-        S3Client.builder.region(region).build
-      } else {
-          S3Client.builder
-            .endpointOverride(new URI(endPoint))
-            .endpointProvider(new S3EndpointProvider {
-              override def resolveEndpoint(endpointParams: S3EndpointParams): CompletableFuture[Endpoint] = {
-                CompletableFuture.completedFuture(Endpoint.builder()
-                  .url(URI.create(endPoint + endpointParams.bucket()))
-                  .build());
-              }
-            })
-          .region(region).build
-      }
-    UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
-  }
+  override def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, InputStream] =
+    throw new UnsupportedOperationException()
 
-  // when we want custom configured S3Client
-  def apply(client: S3Client, bucket: String, prefix: String, storeName: String): UploadS3ClientForStore = {
-    new UploadS3ClientForStore(client, bucket, buildPath(prefix, storeName))
-  }
+  override def uploadStateStore(archiveFile: File, checkPoint: File): Either[Throwable, (String, String, Long)] =
+    throw new UnsupportedOperationException()
 
-  private def buildPath(parts: Any*): String = {
-    parts
-      .map(an => an.toString)
-      .filter(s => !s.isBlank)
-      .map(str => removeEndSlash(str))
-      .mkString("/")
-  }
-
-  private def removeEndSlash(str: String): String = {
-    val stripped = str.strip()
-    if (stripped.endsWith("/")) stripped.substring(0, stripped.length - 1) else stripped
-  }
+  override def configure(params: Properties, storeName: String): StorageUploader =
+    UploadS3ClientForStoreInner(S3StateStoreConfig(params), storeName)
 }
