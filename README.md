@@ -99,19 +99,19 @@ Default implementation uses S3 to store data. To upload state snapshot to s3, th
 ```
 
 
-| Property Name                       | Type   | Default Value                   | Required | Description                                                                                                           |
-|-------------------------------------|--------|---------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------|
-| state.s3.storage.uploader           | Class  | classOf[UploadS3ClientForStore] | __V__    | class to use for upload data to storage. Should implements `StorageUploader` trait and should have empty constructor. |
-| state.s3.bucket.name                | String | ""                              |          | S3 bucket to use to store state store.                                                                                |
-| state.s3.key.prefix                 | String | ""                              |          | S3 bucket key prefix (a.k.a. sub folder) to store state store.                                                        |
-| state.s3.region                     | String | ""                              |          | S3 region to use where to store state store.                                                                          |
-| state.s3.endpoint                   | String | ""                              |          | Custom S3 endpoint (like MinIO).                                                                                      |
-| state.s3.snapshot.frequency.seconds | Long   | 60                              |          | The frequency to flush state store to object storage in seconds.                                                      |
-| state.s3.offset.threshold           | Int    | 10000                           |          | The threshold to restore data from s3. If the value is less, than restoring from kafka. Should be grater than 100.    |
+| Property Name                       | Type   | Default Value                   | Required | Description                                                                                                                                                                      |
+|-------------------------------------|--------|---------------------------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| state.s3.storage.uploader           | Class  | classOf[UploadS3ClientForStore] | __V__    | class to use for upload data to storage. Should implements `StorageUploader` trait in scala or `StorageUploaderJava` interface for java folks and should have empty constructor. |
+| state.s3.bucket.name                | String | ""                              |          | S3 bucket to use to store state store.                                                                                                                                           |
+| state.s3.key.prefix                 | String | ""                              |          | S3 bucket key prefix (a.k.a. sub folder) to store state store.                                                                                                                   |
+| state.s3.region                     | String | ""                              |          | S3 region to use where to store state store.                                                                                                                                     |
+| state.s3.endpoint                   | String | ""                              |          | Custom S3 endpoint (like MinIO).                                                                                                                                                 |
+| state.s3.snapshot.frequency.seconds | Long   | 60                              |          | The frequency to flush state store to object storage in seconds.                                                                                                                 |
+| state.s3.offset.threshold           | Int    | 10000                           |          | The threshold to restore data from s3. If the value is less, than restoring from kafka. Should be grater than 100.                                                               |
 
 ### Notes:
 
 1. During the snapshot, rocksdb files copied to avoid race conditions. During the copy, rocks db compaction disabled. After files are copied, compaction is enabled again.
     It means, you need to attach appropriate amount of storage to your kafka-streams service/pod
 2. Before uploading data to remote storage, it's compressed. During initializing the data is uncompressed. So take in account, you'll need more CPU during the compression.
-3. You can implement your own `StorageUploader`, but since it's scala project, you'll need to deal with scala's `Either`. If it's java, you'll include in your dependencies `org.scala-lang` for version `2.13.x`
+3. You can implement your own `StorageUploader`/`StorageUploaderJava`.

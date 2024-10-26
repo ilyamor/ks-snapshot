@@ -1,7 +1,7 @@
 package org.apache.kafka.streams.state.internals
 
 import io.ilyamor.ks.snapshot.Snapshoter
-import io.ilyamor.ks.snapshot.tools.{StorageUploader, UploadS3ClientForStore}
+import io.ilyamor.ks.snapshot.tools.{StorageUploader, StorageUploaderJava, UploadS3ClientForStore, UploaderUtils}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.config.ConfigDef.{Importance, Type, Validator}
 import org.apache.kafka.common.config.{AbstractConfig, ConfigDef, ConfigException}
@@ -15,6 +15,7 @@ import io.ilyamor.ks.utils.EitherOps.EitherOps
 import org.apache.kafka.common.config.ConfigDef.Range.atLeast
 import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.STATE_STORAGE_UPLOADER
 
+import java.io.{File, InputStream}
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.CollectionHasAsScala
@@ -109,6 +110,23 @@ object StateStoreToS3 extends Logging {
     }
   }
 
+  private case class StorageUploaderWrapperToJava(storageUploader: StorageUploaderJava) extends StorageUploader {
+
+    override def getCheckpointFile(partition: String, storeName: String, applicationId: String): Either[Throwable, OffsetCheckpoint] =
+      Try(storageUploader.getCheckpointFile(partition, storeName, applicationId)).toEither
+
+    override def getStateStores(partition: String, storeName: String, applicationId: String, offset: String): Either[Throwable, InputStream] =
+      Try(storageUploader.getStateStores(partition, storeName, applicationId, offset)).toEither
+
+    override def uploadStateStore(archiveFile: File, checkPoint: File): Either[Throwable, (String, String, Long)] =
+      Try(storageUploader.uploadStateStore(archiveFile, checkPoint))
+        .map(tr => (tr.getPathToArchive, tr.getPathToCheckpoint, tr.getTimeOfUploading)).toEither
+
+    override def configure(params: Properties, storeName: String): StorageUploader = {
+      StorageUploaderWrapperToJava(storageUploader.configure(params, storeName))
+    }
+  }
+
   class S3StateSegmentedStateStore[T <: AbstractRocksDBSegmentedBytesStore[S], S <: Segment]
               (wrapped: SegmentedBytesStore, retainDuplicates: Boolean, windowSize: Long, props: Properties, segmentFetcher: T => List[RocksDB])
       extends RocksDBWindowStore(wrapped, retainDuplicates, windowSize) with Logging {
@@ -121,9 +139,13 @@ object StateStoreToS3 extends Logging {
 
       val config = S3StateStoreConfig(props)
 
-      val storageClientUploader =
+      val storageClientUploader = if (UploaderUtils.isJavaStorageUploaderInstance(config.getClass(STATE_STORAGE_UPLOADER))) {
+        StorageUploaderWrapperToJava(Utils.newInstance(config.getClass(STATE_STORAGE_UPLOADER), classOf[StorageUploaderJava]))
+          .configure(props, prefixKey)
+      } else {
         Utils.newInstance(config.getClass(STATE_STORAGE_UPLOADER), classOf[StorageUploader])
           .configure(props, prefixKey)
+      }
 
       val underlyingStore = this.wrapped.asInstanceOf[T]
       this.snapshoter = Snapshoter(

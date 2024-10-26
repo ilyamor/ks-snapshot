@@ -119,6 +119,7 @@ class StamTest extends AnyFlatSpec with BeforeAndAfter with Logging with BeforeA
     if (dataDir.exists())
       dataDir.delete()
     Files.createDirectory(dataDir.toPath)
+    dataDir.deleteOnExit()
     println(s" --------- data in ${dataDir.getAbsolutePath}")
 
     val bootstrapService = kafka.getBootstrapServers
