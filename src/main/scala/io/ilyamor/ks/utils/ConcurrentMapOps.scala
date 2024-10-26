@@ -12,14 +12,12 @@ object ConcurrentMapOps {
       if (value == null) None else Option(value)
     }
 
-    def availableForWork(key: TppStore, now: Long, frequencyMs: Long): Boolean = {
+    def availableForWork(key: TppStore, now: Long, frequencyMs: Long): Boolean =
       getOps(key) match {
-        case None => true
+        case None                                                                => true
         case Some(state) if state.inWork || now - state.lastFlush <= frequencyMs => false
-        case _ => true
+        case _                                                                   => true
       }
-    }
   }
-
 
 }

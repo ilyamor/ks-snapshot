@@ -21,16 +21,17 @@ object StoreFactory {
   }
 
   case class S3StateBuilder(props: Properties) {
-    def windowStoreToSnapshotStore[K, V, S <: StateStore](keySerde: Serde[K], valueSerde: Serde[V]):
-    Materialized[K, V, S] = {
+    def windowStoreToSnapshotStore[K, V, S <: StateStore](
+      keySerde: Serde[K],
+      valueSerde: Serde[V]
+    ): Materialized[K, V, S] =
       implicitConversion.windowStoreToSnapshotStore(keySerde, valueSerde, props)
-    }
 
     /**
-     * just enables S3Snapshot
-     *
-     * @param stream to enable S3Snapshot on
-     */
+      * just enables S3Snapshot
+      *
+      * @param stream to enable S3Snapshot on
+      */
     def enable(stream: KafkaStreams): KafkaStreams = {
       StoreFactory.KStreamOps(stream).enableS3Snapshot()
       stream
@@ -41,26 +42,26 @@ object StoreFactory {
 
 // for easier use for non-scala (a.k.a java/kotlin) code
 object S3StateBuilder {
+
   /**
-   * <pre>
-   * <code>
-   * StreamBuilder streamBuilder = ...;
-   * S3StateBuilder builder = S3StateBuilder.builder(props);
-   * Materialized<K, V, S> m1 = builder.windowStoreToSnapshotStore(keySerde, valueSerde);
-   * Materialized<K, V, S> m2 = builder.windowStoreToSnapshotStore(keySerde, valueSerde);
-   * // you should use building windows and/or aggregations with methods receiving Materialized,
-   * // else state to s3 snapshoter won't be used
-   * streamBuilder.windowBy(...).count(m1).toStream(....);
-   * streamBuilder.windowBy(...).sum(m2).toStream(....);
-   * KafkaStream streams = new KafkaStream(...);
-   * builder.enable(streams).start();
-   * </code>
-   * </pre>
-   *
-   * @param props kafka props included "s3.state...." properties
-   * @return S3StateBuilder
-   */
-  def builder(props: Properties): S3StateBuilder = {
+    * <pre>
+    * <code>
+    * StreamBuilder streamBuilder = ...;
+    * S3StateBuilder builder = S3StateBuilder.builder(props);
+    * Materialized<K, V, S> m1 = builder.windowStoreToSnapshotStore(keySerde, valueSerde);
+    * Materialized<K, V, S> m2 = builder.windowStoreToSnapshotStore(keySerde, valueSerde);
+    * // you should use building windows and/or aggregations with methods receiving Materialized,
+    * // else state to s3 snapshoter won't be used
+    * streamBuilder.windowBy(...).count(m1).toStream(....);
+    * streamBuilder.windowBy(...).sum(m2).toStream(....);
+    * KafkaStream streams = new KafkaStream(...);
+    * builder.enable(streams).start();
+    * </code>
+    * </pre>
+    *
+    * @param props kafka props included "s3.state...." properties
+    * @return S3StateBuilder
+    */
+  def builder(props: Properties): S3StateBuilder =
     new S3StateBuilder(props)
-  }
 }

@@ -1,15 +1,15 @@
 import io.ilyamor.ks.snapshot.StoreFactory.KStreamOps
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.Serdes
-import org.apache.kafka.streams.kstream.{Consumed, TimeWindows, implicitConversion}
+import org.apache.kafka.streams.kstream.{ implicitConversion, Consumed, TimeWindows }
 import org.apache.kafka.streams.scala.ImplicitConversions._
 import org.apache.kafka.streams.scala.StreamsBuilder
 import org.apache.kafka.streams.scala.serialization.Serdes._
 import org.apache.kafka.streams.state.RocksDBConfigSetter
 import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
-import org.apache.kafka.streams.{KafkaStreams, StreamsConfig}
+import org.apache.kafka.streams.{ KafkaStreams, StreamsConfig }
 import org.apache.logging.log4j.scala.Logging
-import org.rocksdb.{BlockBasedTableConfig, Options}
+import org.rocksdb.{ BlockBasedTableConfig, Options }
 import software.amazon.awssdk.regions.Region
 
 import java.time.Duration
@@ -22,11 +22,14 @@ object GlobalStoresExample extends Logging {
   private val ORDER_TOPIC = "order"
 
   def main(args: Array[String]): Unit = {
-    val bootstrapServers = if (args.length > 0) args(0)
-    else "localhost:9092"
-    val schemaRegistryUrl = if (args.length > 1) args(1)
-    else "http://localhost:8081"
-    val streams = createStreams(bootstrapServers, schemaRegistryUrl, "/tmp/kafka-streams-global-stores")
+    val bootstrapServers =
+      if (args.length > 0) args(0)
+      else "localhost:9092"
+    val schemaRegistryUrl =
+      if (args.length > 1) args(1)
+      else "http://localhost:8081"
+    val streams =
+      createStreams(bootstrapServers, schemaRegistryUrl, "/tmp/kafka-streams-global-stores")
     // Always (and unconditionally) clean local state prior to starting the processing topology.
     // We opt for this unconditional call here because this will make it easier for you to play around with the example
     // when resetting the application for doing a re-run (via the Application Reset Tool,
@@ -49,7 +52,11 @@ object GlobalStoresExample extends Logging {
     ()
   }
 
-  def createStreams(bootstrapServers: String, schemaRegistryUrl: String, stateDir: String): KafkaStreams = {
+  def createStreams(
+    bootstrapServers: String,
+    schemaRegistryUrl: String,
+    stateDir: String
+  ): KafkaStreams = {
 
     implicit val streamsConfiguration: Properties = new Properties
     // Give the Streams application a unique name.  The name must be unique in the Kafka cluster
@@ -87,13 +94,16 @@ object GlobalStoresExample extends Logging {
     val builder = new StreamsBuilder
 
     // Get the stream of orders
-    val ordersStream = builder.stream(ORDER_TOPIC)(Consumed.`with`(Serdes.String(), Serdes.Long())).groupByKey
+    val ordersStream =
+      builder.stream(ORDER_TOPIC)(Consumed.`with`(Serdes.String(), Serdes.Long())).groupByKey
 
     ordersStream
       .windowedBy(TimeWindows.ofSizeWithNoGrace(Duration.ofSeconds(1000000)))
-      .aggregate(0l) { (k, v, agg) => v + agg }(implicitConversion.windowStoreToSnapshotStore).toStream.foreach((k, v) => {
+      .aggregate(0L)((k, v, agg) => v + agg)(implicitConversion.windowStoreToSnapshotStore)
+      .toStream
+      .foreach { (k, v) =>
         //                println(k + " " + v)
-      })
+      }
 
     // Add a global store for customers. The data from this global store
     // will be fully replicated on each instance of this application.
@@ -109,19 +119,19 @@ object GlobalStoresExample extends Logging {
     // global store to retrieve customer and product linked to the order.
     val start = new KafkaStreams(builder.build, streamsConfiguration)
 
-    start.setStateListener((newState, oldState) => {
+    start.setStateListener { (newState, oldState) =>
       logger.info("changing state  " + oldState + newState.name())
-    })
+    }
     //    start.streamsMetadataForStore("store1").asScala.map(_.)
     builder.build()
     //    start.setStateListener()
 
     class BoundedMemoryRocksDBConfig extends RocksDBConfigSetter {
       override def setConfig(
-                              storeName: String,
-                              options: Options,
-                              configs: util.Map[String, AnyRef]
-                            ): Unit = {
+        storeName: String,
+        options: Options,
+        configs: util.Map[String, AnyRef]
+      ): Unit = {
 
         val tableConfig = options.tableFormatConfig.asInstanceOf[BlockBasedTableConfig]
 
