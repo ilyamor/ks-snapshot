@@ -2,10 +2,7 @@ package io.ilyamor.ks.snapshot.tools
 
 import org.apache.kafka.streams.state.internals.OffsetCheckpoint
 import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{
-  STATE_BUCKET,
-  STATE_KEY_PREFIX
-}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{STATE_BUCKET, STATE_KEY_PREFIX}
 import org.apache.logging.log4j.scala.Logging
 import software.amazon.awssdk.core.ResponseInputStream
 import software.amazon.awssdk.core.sync.RequestBody
@@ -15,16 +12,16 @@ import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.endpoints.S3EndpointParams
 import software.amazon.awssdk.services.s3.model._
 
-import java.io.{ File, FileOutputStream, InputStream, RandomAccessFile }
+import java.io.{File, FileOutputStream, InputStream, RandomAccessFile}
 import java.net.URI
 import java.nio.ByteBuffer
 import java.util
 import java.util.Properties
 import java.util.concurrent.CompletableFuture
-import scala.util.{ Try, Using }
+import scala.util.{Try, Using}
 
-case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, storeKey: String)
-    extends StorageUploader with Logging {
+case class UploadS3ClientForStoreInner private(config: S3StateStoreConfig, storeKey: String)
+  extends StorageUploader with Logging {
   val CHECKPOINT = ".checkpoint"
   val suffix = "tzr.gz"
 
@@ -46,36 +43,39 @@ case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, stor
 
   private def buildClient(): S3Client = {
     val region = Region.of(config.getString(S3StateStoreConfig.STATE_REGION))
-    val endPoint =
-      if (config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT).endsWith("/"))
-        config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT)
-      else config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT) + "/"
-
-    val client: S3Client =
-      if (endPoint.isBlank) {
-        S3Client.builder.region(region).build
-      } else {
-        S3Client.builder
-          .endpointOverride(new URI(endPoint))
-          .endpointProvider((endpointParams: S3EndpointParams) =>
-            CompletableFuture.completedFuture(
-              Endpoint
-                .builder()
-                .url(URI.create(endPoint + endpointParams.bucket()))
-                .build()
-            )
-          )
-          .region(region)
-          .build
+    val endPointConfig = config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT)
+    val endPoint = if (endPointConfig.isBlank)
+      None
+    else {
+      if (!endPointConfig.endsWith("/")) {
+        Some(endPointConfig + "/")
       }
-    client
+      else {
+        Some(endPointConfig)
+      }
+    }
+    endPoint match {
+      case Some(endpoint) => S3Client.builder
+        .endpointOverride(new URI(endpoint))
+        .endpointProvider((endpointParams: S3EndpointParams) =>
+          CompletableFuture.completedFuture(
+            Endpoint
+              .builder()
+              .url(URI.create(endPoint + endpointParams.bucket()))
+              .build()
+          )
+        )
+        .region(region)
+        .build
+      case None => S3Client.builder.region(region).build
+    }
   }
 
   def getCheckpointFile(
-    partition: String,
-    storeName: String,
-    applicationId: String
-  ): Either[Throwable, OffsetCheckpoint] = {
+                         partition: String,
+                         storeName: String,
+                         applicationId: String
+                       ): Either[Throwable, OffsetCheckpoint] = {
     val rootPath = s"$applicationId/$partition/$storeName"
     val checkpointPath = s"$rootPath/$CHECKPOINT"
     Try {
@@ -92,11 +92,11 @@ case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, stor
   }
 
   def getStateStores(
-    partition: String,
-    storeName: String,
-    applicationId: String,
-    offset: String
-  ): Either[Throwable, InputStream] = {
+                      partition: String,
+                      storeName: String,
+                      applicationId: String,
+                      offset: String
+                    ): Either[Throwable, InputStream] = {
     val rootPath = s"$applicationId/$partition/$storeName"
     val stateFileCompressed = s"$rootPath/$offset.$suffix"
     logger.info(s"Fetching state store from $stateFileCompressed")
@@ -106,9 +106,9 @@ case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, stor
   }
 
   def uploadStateStore(
-    archiveFile: File,
-    checkPoint: File
-  ): Either[Throwable, (String, String, Long)] =
+                        archiveFile: File,
+                        checkPoint: File
+                      ): Either[Throwable, (String, String, Long)] =
     for {
       f <- uploadArchive(archiveFile)
       u <- uploadCheckpoint(checkPoint)
@@ -163,9 +163,9 @@ case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, stor
   }
 
   private def prepareMultipart(
-    archiveFile: File,
-    uploadId: String
-  ): util.ArrayList[CompletedPart] = {
+                                archiveFile: File,
+                                uploadId: String
+                              ): util.ArrayList[CompletedPart] = {
     val archiveKey = s"$basePathS3/${archiveFile.getName}"
     val completedParts = new java.util.ArrayList[CompletedPart]()
     var partNumber = 1
@@ -204,24 +204,24 @@ case class UploadS3ClientForStoreInner private (config: S3StateStoreConfig, stor
 class UploadS3ClientForStore extends StorageUploader {
 
   override def getCheckpointFile(
-    partition: String,
-    storeName: String,
-    applicationId: String
-  ): Either[Throwable, OffsetCheckpoint] =
+                                  partition: String,
+                                  storeName: String,
+                                  applicationId: String
+                                ): Either[Throwable, OffsetCheckpoint] =
     throw new UnsupportedOperationException()
 
   override def getStateStores(
-    partition: String,
-    storeName: String,
-    applicationId: String,
-    offset: String
-  ): Either[Throwable, InputStream] =
+                               partition: String,
+                               storeName: String,
+                               applicationId: String,
+                               offset: String
+                             ): Either[Throwable, InputStream] =
     throw new UnsupportedOperationException()
 
   override def uploadStateStore(
-    archiveFile: File,
-    checkPoint: File
-  ): Either[Throwable, (String, String, Long)] =
+                                 archiveFile: File,
+                                 checkPoint: File
+                               ): Either[Throwable, (String, String, Long)] =
     throw new UnsupportedOperationException()
 
   override def configure(params: Properties, storeName: String): StorageUploader =
