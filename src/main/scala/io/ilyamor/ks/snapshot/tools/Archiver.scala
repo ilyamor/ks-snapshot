@@ -59,9 +59,8 @@ case class Archiver(outputFile: File, sourceDir: File, position: File) extends L
         logger.info(s"Archiving file ${file.getAbsolutePath} to ${tarEntry.getName}")
         logger.info("file copy " + IOUtils.copy(fis, tarOs))
       } finally {
-        tarOs.flush()
-        //tarOs.closeArchiveEntry()
         fis.close()
+        tarOs.closeArchiveEntry()
       }
     } else if (file.isDirectory) {
       logger.info(s"Starting dir ${file.getAbsolutePath}/")
