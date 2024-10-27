@@ -3,13 +3,10 @@ package org.apache.kafka.streams.kstream
 import org.apache.kafka.common.serialization.Serde
 import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.streams.processor.StateStore
-import org.apache.kafka.streams.scala.kstream.Materialized
+import org.apache.kafka.streams.scala.kstream.{Materialized, StreamJoined}
 import org.apache.kafka.streams.state._
 import org.apache.kafka.streams.state.internals.RocksDbIndexedTimeOrderedWindowBytesStoreSupplier
-import org.apache.kafka.streams.state.internals.StateStoreToS3.{
-  S3StateStoreConfig,
-  WindowedSnapshotSupplier
-}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.{S3StateStoreConfig, WindowedSnapshotSupplier}
 
 import java.util.Properties
 
@@ -34,6 +31,27 @@ object implicitConversion {
     }
     materialized
   }
+  implicit def streamJoinFromKeyValueOtherSerde[K, V, VO](
+    implicit
+    keySerde: Serde[K],
+    valueSerde: Serde[V],
+    otherValueSerde: Serde[VO],
+    props: Properties
+  ): StreamJoined[K, V, VO] = {
+    val materialized = StreamJoined.`with`[K, V, VO]
+    if (S3StateStoreConfig(props).getBoolean(S3StateStoreConfig.STATE_ENABLED)) {
+      if (materialized.dslStoreSuppliers == null)
+        materialized.dslStoreSuppliers = Utils.newInstance(
+          classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers],
+          classOf[DslStoreSuppliers]
+        )
+      materialized.dslStoreSuppliers =
+        new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
+      println("replacing windowStoreToSnapshotStore")
+    }
+    materialized
+
+  }
 
   implicit class SnapshotMaterialized[K, V, S <: StateStore](materialized: Materialized[K, V, S]) {
     def withSnapshotEnabled(implicit props: Properties): Materialized[K, V, S] = {
@@ -47,6 +65,20 @@ object implicitConversion {
           new SnapshotStoreSupplier(materialized.dslStoreSuppliers, props)
       }
       materialized
+    }
+  }
+  implicit class SnapsShotStreamJoined[K, V, VO](streamJoined: StreamJoined[K, V, VO]) {
+    def withSnapshotEnabled(implicit props: Properties): StreamJoined[K, V, VO] = {
+      if (S3StateStoreConfig(props).getBoolean(S3StateStoreConfig.STATE_ENABLED)) {
+        if (streamJoined.dslStoreSuppliers == null)
+          streamJoined.dslStoreSuppliers = Utils.newInstance(
+            classOf[BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers],
+            classOf[DslStoreSuppliers]
+          )
+        streamJoined.dslStoreSuppliers =
+          new SnapshotStoreSupplier(streamJoined.dslStoreSuppliers, props)
+      }
+      streamJoined
     }
   }
 

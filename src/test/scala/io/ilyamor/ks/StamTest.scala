@@ -1,35 +1,35 @@
 package io.ilyamor.ks
 
 import io.ilyamor.ks.snapshot.StoreFactory.KStreamOps
-import io.minio.admin.{ MinioAdminClient, UserInfo }
+import io.minio.admin.{MinioAdminClient, UserInfo}
 import io.minio.messages.Item
-import io.minio.{ GetObjectArgs, ListObjectsArgs, MakeBucketArgs, MinioClient, SetBucketPolicyArgs }
-import org.apache.kafka.clients.admin.{ AdminClient, AdminClientConfig, NewTopic }
-import org.apache.kafka.clients.consumer.{ ConsumerConfig, KafkaConsumer, OffsetResetStrategy }
-import org.apache.kafka.clients.producer.{ KafkaProducer, ProducerConfig, ProducerRecord }
-import org.apache.kafka.common.serialization.Deserializer
-import org.apache.kafka.streams.kstream.{ implicitConversion, Consumed, TimeWindows }
-import org.apache.kafka.streams.scala.StreamsBuilder
-import org.apache.kafka.streams.scala.kstream.{ Grouped, Produced }
-import org.apache.kafka.streams.scala.serialization.Serdes
-import org.apache.kafka.streams.scala.serialization.Serdes.longSerde
-import org.apache.kafka.streams.scala.serialization.Serdes.stringSerde
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
-import org.apache.kafka.streams.{ KafkaStreams, StreamsConfig }
-import org.apache.logging.log4j.scala.Logging
-import org.scalatest.{ BeforeAndAfter, BeforeAndAfterAll }
-import org.scalatest.flatspec.AnyFlatSpec
-import org.testcontainers.containers.MinIOContainer
-import org.testcontainers.kafka.KafkaContainer
-import org.testcontainers.utility.DockerImageName
+import io.minio._
+import _root_.org.apache.kafka.clients.admin.{AdminClient, AdminClientConfig, NewTopic}
+import _root_.org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer, OffsetResetStrategy}
+import _root_.org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
+import _root_.org.apache.kafka.common.serialization.Deserializer
+import _root_.org.apache.kafka.streams.kstream.implicitConversion.streamJoinFromKeyValueOtherSerde
+import _root_.org.apache.kafka.streams.kstream.{Consumed, JoinWindows, TimeWindows, implicitConversion}
+import _root_.org.apache.kafka.streams.scala.StreamsBuilder
+import _root_.org.apache.kafka.streams.scala.kstream.{Grouped, Produced}
+import _root_.org.apache.kafka.streams.scala.serialization.Serdes
+import _root_.org.apache.kafka.streams.scala.serialization.Serdes.{longSerde, stringSerde}
+import _root_.org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
+import _root_.org.apache.kafka.streams.{KafkaStreams, StreamsConfig}
+import _root_.org.apache.logging.log4j.scala.Logging
+import _root_.org.scalatest.flatspec.AnyFlatSpec
+import _root_.org.scalatest.{BeforeAndAfter, BeforeAndAfterAll}
+import _root_.org.testcontainers.containers.MinIOContainer
+import _root_.org.testcontainers.kafka.KafkaContainer
+import _root_.org.testcontainers.utility.DockerImageName
 import software.amazon.awssdk.regions.Region
 
 import java.io.File
 import java.nio.file.Files
 import java.time.Duration
 import java.util.Properties
-import java.util.stream.{ Collectors, StreamSupport }
-import scala.jdk.CollectionConverters.{ ListHasAsScala, SeqHasAsJava }
+import java.util.stream.{Collectors, StreamSupport}
+import scala.jdk.CollectionConverters.{ListHasAsScala, SeqHasAsJava}
 
 class StamTest extends AnyFlatSpec with BeforeAndAfter with Logging with BeforeAndAfterAll {
 
@@ -252,6 +252,15 @@ class StamTest extends AnyFlatSpec with BeforeAndAfter with Logging with BeforeA
       .stream(sourceTopic)(Consumed.`with`(Serdes.stringSerde, Serdes.longSerde))
       .groupByKey(Grouped.`with`)
 
+    val ordersStream2 = builder
+      .stream(sourceTopic)(Consumed.`with`(Serdes.stringSerde, Serdes.longSerde))
+
+    ordersStream2.leftJoin(ordersStream2)(
+      (v1, v2) => v1,
+      JoinWindows.ofTimeDifferenceWithNoGrace(Duration.ofSeconds(1000000))
+    )(streamJoinFromKeyValueOtherSerde)
+
+    ordersStream
     ordersStream
       .windowedBy(TimeWindows.ofSizeWithNoGrace(Duration.ofSeconds(1000000)))
       .aggregate(0L)((k, v, agg) => v + agg)(implicitConversion.windowStoreToSnapshotStore)

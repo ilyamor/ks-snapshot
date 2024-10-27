@@ -54,7 +54,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val downloadAndExtractSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "init",
       "all",
       RecordingLevel.INFO,
@@ -64,9 +64,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val downloadCheckpointSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "init",
-      "download_checkpoint",
+      "download-checkpoint",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -74,9 +74,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val downloadStateSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-tate-store",
       "init",
-      "download_state",
+      "download-state",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -84,9 +84,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val downloadStateErrorSensor: Sensor = context
     .metrics()
     .addRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "init",
-      "download_state_error",
+      "download-state=error",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -94,9 +94,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val extractStateSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "init",
-      "extract_state",
+      "extract-state",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -104,9 +104,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val extractStateErrorSensor: Sensor = context
     .metrics()
     .addRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "init",
-      "extract_state_error",
+      "extract-state-error",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -115,9 +115,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val pauseRocksDBBackgroundSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
-      "pause_rocksdb_background",
+      "pause-rocksdb-background",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -125,9 +125,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val copyRocksDBToTempSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
-      "copy_rocksdb_to_temp",
+      "copy-rocksdb-to-temp",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -135,9 +135,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val archiveSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
-      "archive_store",
+      "archive-store",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -145,9 +145,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val archiveErrorSensor: Sensor = context
     .metrics()
     .addRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
-      "archive_store_error",
+      "archive-store-error",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -155,9 +155,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val uploadStoreSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
-      "upload_state",
+      "upload-state",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -165,9 +165,9 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val uploadStoreErrorSensor: Sensor = context
     .metrics()
     .addRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
-      "upload_state_error",
+      "upload-state-error",
       RecordingLevel.INFO,
       "storeName",
       storeName
@@ -175,7 +175,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val flushStoreSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
-      "s3_state_store",
+      "s3-state-store",
       "flush",
       "all",
       RecordingLevel.INFO,
