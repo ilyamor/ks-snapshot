@@ -344,6 +344,7 @@ object StateStoreToS3 extends Logging {
         .define(
           STATE_BUCKET,
           Type.STRING,
+          "",
           Importance.MEDIUM,
           "Defines S3 bucket to use to store state store. Required."
         )
@@ -357,6 +358,7 @@ object StateStoreToS3 extends Logging {
         .define(
           STATE_REGION,
           Type.STRING,
+          "",
           Importance.MEDIUM,
           "Defines s3 region to use where to store state store. Required."
         )

@@ -44,29 +44,26 @@ case class UploadS3ClientForStoreInner private(config: S3StateStoreConfig, store
   private def buildClient(): S3Client = {
     val region = Region.of(config.getString(S3StateStoreConfig.STATE_REGION))
     val endPointConfig = config.getString(S3StateStoreConfig.STATE_S3_ENDPOINT)
-    val endPoint = if (endPointConfig.isBlank)
-      None
-    else {
-      if (!endPointConfig.endsWith("/")) {
-        Some(endPointConfig + "/")
-      }
-      else {
-        Some(endPointConfig)
-      }
-    }
+    val endPoint =
+      if (endPointConfig.isBlank)
+        None
+      else
+        Some(endPointConfig.stripSuffix("/") + "/")
+
     endPoint match {
-      case Some(endpoint) => S3Client.builder
-        .endpointOverride(new URI(endpoint))
-        .endpointProvider((endpointParams: S3EndpointParams) =>
-          CompletableFuture.completedFuture(
-            Endpoint
-              .builder()
-              .url(URI.create(endPoint + endpointParams.bucket()))
-              .build()
+      case Some(endpoint) =>
+        S3Client.builder
+          .endpointOverride(new URI(endpoint))
+          .endpointProvider((endpointParams: S3EndpointParams) =>
+            CompletableFuture.completedFuture(
+              Endpoint
+                .builder()
+                .url(URI.create(endPoint + endpointParams.bucket()))
+                .build()
+            )
           )
-        )
-        .region(region)
-        .build
+          .region(region)
+          .build
       case None => S3Client.builder.region(region).build
     }
   }
