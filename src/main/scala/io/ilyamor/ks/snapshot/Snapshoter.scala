@@ -1,41 +1,31 @@
 package io.ilyamor.ks.snapshot
 
-import io.ilyamor.ks.snapshot.tools.{ Archiver, CheckPointCreator, StorageUploader }
+import com.github.luben.zstd.ZstdInputStream
+import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, StorageUploader}
 import io.ilyamor.ks.utils.ConcurrentMapOps.ConcurrentMapOps
 import io.ilyamor.ks.utils.EitherOps.EitherOps
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.io.FileUtils
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.metrics.Sensor
 import org.apache.kafka.common.metrics.Sensor.RecordingLevel
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
-import org.apache.kafka.streams.processor.{ StateStore, StateStoreContext }
+import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
 import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{
-  STATE_OFFSET_THRESHOLD,
-  STATE_SNAPSHOT_FREQUENCY_SECONDS
-}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{STATE_OFFSET_THRESHOLD, STATE_SNAPSHOT_FREQUENCY_SECONDS}
 import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.SnapshotStoreListener.FlushingState
-import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.{
-  SnapshotStoreListener,
-  TppStore
-}
-import org.apache.kafka.streams.state.internals.{
-  AbstractRocksDBSegmentedBytesStore,
-  OffsetCheckpoint,
-  Segment
-}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.{SnapshotStoreListener, TppStore}
+import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesStore, OffsetCheckpoint, Segment}
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 
-import java.io.{ File, FileOutputStream, InputStream }
+import java.io.{File, FileOutputStream, InputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
-import java.nio.file.{ Files, Path }
+import java.nio.file.{Files, Path}
 import scala.concurrent.Future
-import scala.jdk.CollectionConverters.{ MapHasAsScala, MutableMapHasAsJava }
+import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
 import scala.util.Try
 
 case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
@@ -401,7 +391,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     response: InputStream
   ): Either[Throwable, Unit] =
     Try {
-      val gzipInputStream = new GzipCompressorInputStream(response)
+      val gzipInputStream = new ZstdInputStream(response)
       val tarInputStream = new TarArchiveInputStream(gzipInputStream)
       try {
         var entry: ArchiveEntry = null
