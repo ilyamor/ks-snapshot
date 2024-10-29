@@ -1,8 +1,10 @@
 package io.ilyamor.ks.snapshot
 
-import io.ilyamor.ks.snapshot.tools.{ Archiver, CheckPointCreator, StorageUploader }
+import io.ilyamor.ks.snapshot.Snapshoter.SnapshotMetrics
+import io.ilyamor.ks.snapshot.tools.{Archiver, CheckPointCreator, StorageUploader}
 import io.ilyamor.ks.utils.ConcurrentMapOps.ConcurrentMapOps
 import io.ilyamor.ks.utils.EitherOps.EitherOps
+import io.ilyamor.ks.utils.MetricUtils.MetricsTimer
 import org.apache.commons.compress.archivers.ArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -11,177 +13,37 @@ import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.metrics.Sensor
 import org.apache.kafka.common.metrics.Sensor.RecordingLevel
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
-import org.apache.kafka.streams.processor.{ StateStore, StateStoreContext }
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig
-import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{
-  STATE_OFFSET_THRESHOLD,
-  STATE_SNAPSHOT_FREQUENCY_SECONDS
-}
+import org.apache.kafka.streams.processor.{StateStore, StateStoreContext}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfig.{STATE_OFFSET_THRESHOLD, STATE_SNAPSHOT_FREQUENCY_SECONDS}
 import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.SnapshotStoreListener.FlushingState
-import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.{
-  SnapshotStoreListener,
-  TppStore
-}
-import org.apache.kafka.streams.state.internals.{
-  AbstractRocksDBSegmentedBytesStore,
-  OffsetCheckpoint,
-  Segment
-}
+import org.apache.kafka.streams.state.internals.StateStoreToS3.SnapshotStoreListeners.TppStore
+import org.apache.kafka.streams.state.internals.StateStoreToS3.{S3StateStoreConfig, SnapshotStoreListeners}
+import org.apache.kafka.streams.state.internals.{AbstractRocksDBSegmentedBytesStore, OffsetCheckpoint, Segment}
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 
-import java.io.{ File, FileOutputStream, InputStream }
+import java.io.{File, FileOutputStream, InputStream}
 import java.lang
 import java.lang.System.currentTimeMillis
-import java.nio.file.{ Files, Path }
+import java.nio.file.{Files, Path}
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.Future
-import scala.jdk.CollectionConverters.{ MapHasAsScala, MutableMapHasAsJava }
+import scala.jdk.CollectionConverters.{MapHasAsScala, MutableMapHasAsJava}
 import scala.util.Try
-
-case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
-  snapshotStoreListener: SnapshotStoreListener.type,
+class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
+  snapshotStoreListener: SnapshotStoreListeners.SnapshotStoreListener.type,
   storageClientForStore: StorageUploader,
   context: ProcessorContextImpl,
   storeName: String,
   underlyingStore: Store,
   segmentFetcher: Store => List[RocksDB],
-  config: S3StateStoreConfig
+  config: S3StateStoreConfig,
+  metrics: SnapshotMetrics,
+  implicit val ec: scala.concurrent.ExecutionContext
 ) extends Logging {
 
-  private lazy val OFFSET_THRESHOLD_RESTORE_FROM_S3: Int = config.getInt(STATE_OFFSET_THRESHOLD)
   private lazy val SNAPSHOT_FREQUENCY_MS = config.getLong(STATE_SNAPSHOT_FREQUENCY_SECONDS) * 1000
-
-  private lazy val downloadAndExtractSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "init",
-      "all",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val downloadCheckpointSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "init",
-      "download_checkpoint",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val downloadStateSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "init",
-      "download_state",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val downloadStateErrorSensor: Sensor = context
-    .metrics()
-    .addRateTotalSensor(
-      "s3_state_store",
-      "init",
-      "download_state_error",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val extractStateSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "init",
-      "extract_state",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val extractStateErrorSensor: Sensor = context
-    .metrics()
-    .addRateTotalSensor(
-      "s3_state_store",
-      "init",
-      "extract_state_error",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-
-  private lazy val pauseRocksDBBackgroundSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "pause_rocksdb_background",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val copyRocksDBToTempSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "copy_rocksdb_to_temp",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val archiveSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "archive_store",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val archiveErrorSensor: Sensor = context
-    .metrics()
-    .addRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "archive_store_error",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val uploadStoreSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "upload_state",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val uploadStoreErrorSensor: Sensor = context
-    .metrics()
-    .addRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "upload_state_error",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
-  private lazy val flushStoreSensor: Sensor = context
-    .metrics()
-    .addLatencyRateTotalSensor(
-      "s3_state_store",
-      "flush",
-      "all",
-      RecordingLevel.INFO,
-      "storeName",
-      storeName
-    )
+  private lazy val OFFSET_THRESHOLD_RESTORE_FROM_S3: Int = config.getInt(STATE_OFFSET_THRESHOLD)
 
   def initFromSnapshot(): Unit =
     Fetcher.initFromSnapshot()
@@ -203,26 +65,23 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
       val localCheckPointFile = getLocalCheckpointFile(context).toOption
       val remoteCheckPoint = fetchRemoteCheckPointFile(context).toOption
       if (shouldFetchStateStoreFromSnapshot(localCheckPointFile, remoteCheckPoint)) {
-        withLatencyMetrics(
-          downloadAndExtractSensor,
-          () =>
-            fetchAndWriteLocally(context, remoteCheckPoint) ->
-              overrideLocalCheckPointFile(
-                context,
-                localCheckPointFile,
-                remoteCheckPoint,
-                ".checkpoint"
-              ) -> {
-              val localPosition = overLocalPositionFile(context)
-              val remotePosition = getPositionFileFromDownloadedStore(context)
-              overrideLocalCheckPointFile(
-                context,
-                localPosition.toOption,
-                remotePosition.toOption,
-                s"$storeName.position"
-              )
-            }
-        )
+        (fetchAndWriteLocally(context, remoteCheckPoint) ->
+          overrideLocalCheckPointFile(
+            context,
+            localCheckPointFile,
+            remoteCheckPoint,
+            ".checkpoint"
+          ) -> {
+          val localPosition = overLocalPositionFile(context)
+          val remotePosition = getPositionFileFromDownloadedStore(context)
+          overrideLocalCheckPointFile(
+            context,
+            localPosition.toOption,
+            remotePosition.toOption,
+            s"$storeName.position"
+          )
+        }).time(metrics.downloadAndExtractSensor)
+
       }
     }
 
@@ -284,14 +143,6 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     }
   }
 
-  private def withLatencyMetrics[V](sensor: Sensor, f: () => V): V = {
-    val start = currentTimeMillis()
-    val res = f()
-    val end = currentTimeMillis()
-    sensor.record(end - start, end)
-    res
-  }
-
   private def fetchAndWriteLocally(
     context: StateStoreContext,
     remoteCheckPoint: Option[OffsetCheckpoint]
@@ -300,26 +151,24 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
       case Some(localCheckPointFile) =>
         localCheckPointFile.read().asScala.values.headOption match {
           case Some(offset) =>
-            withLatencyMetrics(
-              downloadStateSensor,
-              () =>
-                storageClientForStore.getStateStores(
-                  context.taskId.toString,
-                  storeName,
-                  context.applicationId(),
-                  offset.toString
-                )
-            ).tapError { e =>
-                downloadStateErrorSensor.record()
+            storageClientForStore
+              .getStateStores(
+                context.taskId.toString,
+                storeName,
+                context.applicationId(),
+                offset.toString
+              )
+              .time(metrics.downloadStateSensor)
+              .tapError { e =>
+                metrics.downloadStateErrorSensor.record()
                 logger.error(s"Error while fetching remote state store: $e", e)
               }
               .tapError(e => throw e)
               .map { (response: InputStream) =>
                 val destDir = s"${context.stateDir.getAbsolutePath}"
-                withLatencyMetrics(
-                  extractStateSensor,
-                  () => extractAndDecompress(destDir, response)
-                ).tapError(_ => extractStateErrorSensor.record())
+                extractAndDecompress(destDir, response)
+                  .time(metrics.extractStateSensor)
+                  .tapError(_ => metrics.extractStateErrorSensor.record())
               }
 
           case None =>
@@ -386,15 +235,14 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private def fetchRemoteCheckPointFile(
     context: StateStoreContext
   ): Either[Throwable, OffsetCheckpoint] =
-    withLatencyMetrics(
-      downloadCheckpointSensor,
-      () =>
-        storageClientForStore.getCheckpointFile(
-          context.taskId.toString,
-          storeName,
-          context.applicationId()
-        )
-    ).tapError(e => logger.error(s"Error while fetching remote checkpoint: $e"))
+    storageClientForStore
+      .getCheckpointFile(
+        context.taskId.toString,
+        storeName,
+        context.applicationId()
+      )
+      .tapError(e => logger.error(s"Error while fetching remote checkpoint: $e"))
+      .time(metrics.downloadCheckpointSensor)
 
   private def extractAndDecompress(
     destDir: String,
@@ -456,6 +304,12 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
       val tp = new TopicPartition(topic, partition)
 
       val tppStore = TppStore(tp, storeName)
+
+      def createCheckpoint(tempDir: Path, positions: Map[TopicPartition, lang.Long]) =
+        CheckPointCreator
+          .create(tempDir.toFile, s"$storeName.position", positions)
+          .write()
+
       if (!snapshotStoreListener.taskStore.getOrDefault(tppStore, false)
           && snapshotStoreListener.workingFlush.availableForWork(
             tppStore,
@@ -468,22 +322,10 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
           .flatMap(collector => Option(collector.offsets().get(tp)))
         if (offset.isDefined && sourceTopic.isDefined) {
 
-          val (tempDir, path) = withLatencyMetrics(
-            pauseRocksDBBackgroundSensor,
-            () => {
-              val segments = segmentFetcher(underlyingStore)
-              segments.foreach(_.pauseBackgroundWork())
-              val storePath = s"${stateDir.getAbsolutePath}/$storeName"
-              //copying storePath to tempDir
-              val paths = withLatencyMetrics(copyRocksDBToTempSensor, () => {
-                val tempDir = Files.createTempDirectory(s"$partition-$storeName")
-                val path = copyStorePathToTempDir(storePath)
-                (tempDir, path)
-              })
-              segments.foreach(_.continueBackgroundWork())
-              paths
-            }
-          )
+          val segments = segmentFetcher(underlyingStore)
+          segments.foreach(_.pauseBackgroundWork()).time(metrics.pauseRocksDBBackgroundSensor)
+          val (tempDir, path) = copyStateToTempDir(stateDir, partition)
+          segments.foreach(_.continueBackgroundWork()).time(metrics.pauseRocksDBBackgroundSensor)
 
           val stateStore: StateStore = context.stateManager().getStore(storeName)
           val stateStorePositions = stateStore.getPosition
@@ -492,52 +334,282 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
               logger.debug(
                 s"starting to snapshot for task ${context.taskId()} store: " + storeName + " with offset: " + offset
               )
-              val positions: Map[TopicPartition, lang.Long] = stateStorePositions
+              val positions = stateStorePositions
                 .getPartitionPositions(context.topic())
                 .asScala
                 .map(tp => (new TopicPartition(sourceTopic.get, tp._1), tp._2))
                 .toMap
+
               snapshotStoreListener.workingFlush
                 .put(tppStore, FlushingState(inWork = true, currentTimeMillis()))
-              withLatencyMetrics(
-                flushStoreSensor,
-                () => {
-                  val files = for {
-                    positionFile <- CheckPointCreator
-                                     .create(tempDir.toFile, s"$storeName.position", positions)
-                                     .write()
-                    archivedFile <- withLatencyMetrics(
-                                     archiveSensor,
-                                     () =>
-                                       Archiver(
-                                         tempDir.toFile,
-                                         offset.get,
-                                         new File(s"${path.toAbsolutePath}"),
-                                         positionFile
-                                       ).archive()
-                                   ).tapError(_ => archiveErrorSensor.record())
-                    checkpointFile <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
-                    uploadResultQuarto <- withLatencyMetrics(
-                                           uploadStoreSensor,
-                                           () =>
-                                             storageClientForStore
-                                               .uploadStateStore(archivedFile, checkpointFile)
-                                         ).tapError(_ => uploadStoreErrorSensor.record())
-                  } yield uploadResultQuarto
-                  files
-                    .tap(
-                      e => logger.error(s"Error while uploading state store: $e", e),
-                      files => logger.debug(s"Successfully uploaded state store: $files")
-                    )
-                }
-              )
+
+              (for {
+                positionFile       <- createCheckpoint(tempDir, positions)
+                archivedFile       <- compressStateStore(offset, tempDir, path, positionFile)
+                checkpointFile     <- CheckPointCreator(tempDir.toFile, tp, offset.get).write()
+                uploadResultQuarto <- uploadToRemoteStorage(archivedFile, checkpointFile)
+              } yield uploadResultQuarto)
+                .tap(
+                  e => logger.error(s"Error while uploading state store: $e", e),
+                  files => logger.debug(s"Successfully uploaded state store: $files")
+                )
+                .time(metrics.flushStoreSensor)
+
               snapshotStoreListener.workingFlush
                 .put(tppStore, FlushingState(inWork = false, System.currentTimeMillis()))
-            }(scala.concurrent.ExecutionContext.global)
+
+            }(ec)
           }
         }
       }
 
     }
+
+    private def copyStateToTempDir(stateDir: File, partition: Int) = {
+      val storePath = s"${stateDir.getAbsolutePath}/$storeName"
+      //copying storePath to tempDir
+      val tempDir = Files.createTempDirectory(s"$partition-$storeName")
+      val path = copyStorePathToTempDir(storePath).time(metrics.copyRocksDBToTempSensor)
+      (tempDir, path)
+    }
+
+    private def uploadToRemoteStorage(archivedFile: File, checkpointFile: File) =
+      storageClientForStore
+        .uploadStateStore(archivedFile, checkpointFile)
+        .time(metrics.uploadStoreSensor)
+        .tapError(_ => metrics.uploadStoreErrorSensor.record())
+
+    private def compressStateStore(
+      offset: Option[lang.Long],
+      tempDir: Path,
+      path: Path,
+      positionFile: File
+    ) =
+      Archiver(
+        tempDir.toFile,
+        offset.get,
+        new File(s"${path.toAbsolutePath}"),
+        positionFile
+      ).archive()
+        .time(metrics.archiveSensor)
+        .tapError(_ => metrics.archiveErrorSensor.record())
   }
+}
+object Snapshoter {
+  import java.util.concurrent.{Executors, ThreadPoolExecutor}
+  import scala.concurrent.ExecutionContext
+
+  private val threadPool: ThreadPoolExecutor =
+    Executors.newFixedThreadPool(3).asInstanceOf[ThreadPoolExecutor]
+  implicit val ec: ExecutionContext = ExecutionContext.fromExecutor(threadPool)
+  //create ExecutionContext with 3 threads
+  private val isClosed = new AtomicBoolean(false)
+  Runtime.getRuntime.addShutdownHook(new Thread(() => shutdownHookThread()))
+  private def shutdownHookThread(): Unit =
+    if (isClosed.compareAndSet(false, true)) {
+      threadPool.shutdown()
+    }
+  def apply[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[S]](
+    snapshotStoreListener: SnapshotStoreListeners.SnapshotStoreListener.type,
+    storageClientForStore: StorageUploader,
+    context: ProcessorContextImpl,
+    storeName: String,
+    underlyingStore: Store,
+    segmentFetcher: Store => List[RocksDB],
+    config: S3StateStoreConfig
+  ) = {
+    val metrics = SnapshotMetrics.registerMetrics(context, context.taskId.toString, storeName)
+    val store: Snapshoter[S, Store] = new Snapshoter(
+      snapshotStoreListener,
+      storageClientForStore,
+      context,
+      storeName,
+      underlyingStore,
+      segmentFetcher,
+      config,
+      metrics,
+      ec
+    )
+    store
+  }
+
+  object SnapshotMetrics {
+
+    private val PREFIX = "s3-state-snapshot"
+    private val OPERATION_GROUP_INIT = "init"
+    private val OPERATION_GROUP_FLUSH = "flush"
+
+    private def addTags(taskId: String, storeName: String) =
+      List(List("storeName", storeName), List("taskId", taskId))
+
+    def registerMetrics(
+      context: StateStoreContext,
+      taskId: String,
+      storeName: String
+    ): SnapshotMetrics = {
+      val tagsMap: List[String] = addTags(taskId, storeName).flatten
+
+      val downloadAndExtractSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_INIT,
+          "all",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+
+      val downloadCheckpointSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_INIT,
+          "download_checkpoint",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val downloadStateSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_INIT,
+          "download_state",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val downloadStateErrorSensor: Sensor = context
+        .metrics()
+        .addRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_INIT,
+          "download_state_error",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val extractStateSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_INIT,
+          "extract_state",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val extractStateErrorSensor: Sensor = context
+        .metrics()
+        .addRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_INIT,
+          "extract_state_error",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+
+      val pauseRocksDBBackgroundSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "pause_rocksdb_background",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val continueRocksDBBackgroundSensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "continue_rocksdb_background",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val copyRocksDBToTempSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "copy_rocksdb_to_temp",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val archiveSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "archive_store",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val archiveErrorSensor: Sensor = context
+        .metrics()
+        .addRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "archive_store_error",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val uploadStoreSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "upload_state",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val uploadStoreErrorSensor: Sensor = context
+        .metrics()
+        .addRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "upload_state_error",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      val flushStoreSensor: Sensor = context
+        .metrics()
+        .addLatencyRateTotalSensor(
+          PREFIX,
+          OPERATION_GROUP_FLUSH,
+          "all",
+          RecordingLevel.INFO,
+          tagsMap: _*
+        )
+      SnapshotMetrics(
+        flushStoreSensor,
+        uploadStoreErrorSensor,
+        uploadStoreSensor,
+        archiveErrorSensor,
+        archiveSensor,
+        copyRocksDBToTempSensor,
+        pauseRocksDBBackgroundSensor,
+        continueRocksDBBackgroundSensor,
+        extractStateErrorSensor,
+        extractStateSensor,
+        downloadStateErrorSensor,
+        downloadStateSensor,
+        downloadCheckpointSensor,
+        downloadAndExtractSensor
+      )
+    }
+
+  }
+  case class SnapshotMetrics(
+    flushStoreSensor: Sensor,
+    uploadStoreErrorSensor: Sensor,
+    uploadStoreSensor: Sensor,
+    archiveErrorSensor: Sensor,
+    archiveSensor: Sensor,
+    copyRocksDBToTempSensor: Sensor,
+    pauseRocksDBBackgroundSensor: Sensor,
+    continueRocksDBBackgroundSensor: Sensor,
+    extractStateErrorSensor: Sensor,
+    extractStateSensor: Sensor,
+    downloadStateErrorSensor: Sensor,
+    downloadStateSensor: Sensor,
+    downloadCheckpointSensor: Sensor,
+    downloadAndExtractSensor: Sensor
+  )
 }
