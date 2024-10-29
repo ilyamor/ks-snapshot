@@ -51,14 +51,14 @@ case class UploadS3ClientForStoreInner private(config: S3StateStoreConfig, store
         Some(endPointConfig.stripSuffix("/") + "/")
 
     endPoint match {
-      case Some(endpoint) =>
+      case Some(underlying_endpoint) =>
         S3Client.builder
-          .endpointOverride(new URI(endpoint))
+          .endpointOverride(new URI(underlying_endpoint))
           .endpointProvider((endpointParams: S3EndpointParams) =>
             CompletableFuture.completedFuture(
               Endpoint
                 .builder()
-                .url(URI.create(endPoint + endpointParams.bucket()))
+                .url(URI.create(underlying_endpoint + endpointParams.bucket()))
                 .build()
             )
           )

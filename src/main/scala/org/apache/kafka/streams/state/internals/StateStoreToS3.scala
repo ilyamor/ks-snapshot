@@ -1,18 +1,13 @@
 package org.apache.kafka.streams.state.internals
 
 import io.ilyamor.ks.snapshot.Snapshoter
-import io.ilyamor.ks.snapshot.tools.{
-  StorageUploader,
-  StorageUploaderJava,
-  UploadS3ClientForStore,
-  UploaderUtils
-}
+import io.ilyamor.ks.snapshot.tools.{StorageUploader, StorageUploaderJava, UploadS3ClientForStore, UploaderUtils}
 import io.ilyamor.ks.utils.EitherOps.EitherOps
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.config.ConfigDef.Range.atLeast
-import org.apache.kafka.common.config.ConfigDef.{ Importance, Type }
-import org.apache.kafka.common.config.{ AbstractConfig, ConfigDef, ConfigException }
-import org.apache.kafka.common.utils.{ Bytes, Utils }
+import org.apache.kafka.common.config.ConfigDef.{Importance, Type}
+import org.apache.kafka.common.config.{AbstractConfig, ConfigDef, ConfigException}
+import org.apache.kafka.common.utils.{Bytes, Utils}
 import org.apache.kafka.streams.processor._
 import org.apache.kafka.streams.processor.internals.ProcessorContextImpl
 import org.apache.kafka.streams.state.WindowStore
@@ -20,7 +15,7 @@ import org.apache.kafka.streams.state.internals.StateStoreToS3.S3StateStoreConfi
 import org.apache.logging.log4j.scala.Logging
 import org.rocksdb.RocksDB
 
-import java.io.{ File, InputStream }
+import java.io.{File, InputStream}
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.CollectionHasAsScala
