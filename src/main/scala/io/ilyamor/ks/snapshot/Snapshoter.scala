@@ -41,6 +41,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
   private lazy val OFFSET_THRESHOLD_RESTORE_FROM_S3: Int = config.getInt(STATE_OFFSET_THRESHOLD)
   private lazy val SNAPSHOT_FREQUENCY_MS = config.getLong(STATE_SNAPSHOT_FREQUENCY_SECONDS) * 1000
 
+
   private lazy val downloadAndExtractSensor: Sensor = context
     .metrics()
     .addLatencyRateTotalSensor(
@@ -223,6 +224,7 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
       val file = new File(positionFile)
       if (file.exists())
         Right(new OffsetCheckpoint(file))
+
       else {
         Left(new IllegalArgumentException("Checkpoint file not found"))
       }
@@ -267,10 +269,14 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
       logger.info(
         s"Writing new offsets to local checkpoint file: $checkpointPath with new offset $newOffsets"
       )
-      Try {
+      val res = Try {
         new OffsetCheckpoint(new File(checkpointPath)).write(newOffsets)
       }.toEither
-        .tapError(e => logger.error(s"Error while overriding local checkpoint file: $e", e))
+        .tapError(e => logger.error(s"Error while overriding local position file: $e", e))
+
+
+      Try(remoteCheckPoint.foreach(_.delete())).toEither.tapError(e => logger.error(s"Error while deleting remote checkpoint file: $e", e))
+      res
     }
   }
 
@@ -393,6 +399,8 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
     Try {
       val gzipInputStream = new ZstdInputStream(response)
       val tarInputStream = new TarArchiveInputStream(gzipInputStream)
+      val buffer = new Array[Byte](102400)
+
       try {
         var entry: ArchiveEntry = null
         do {
@@ -407,7 +415,6 @@ case class Snapshoter[S <: Segment, Store <: AbstractRocksDBSegmentedBytesStore[
               try {
                 val outputStream = new FileOutputStream(destPath)
                 try {
-                  val buffer = new Array[Byte](1024)
                   var bytesRead = 0
                   do {
                     bytesRead = tarInputStream.read(buffer)
