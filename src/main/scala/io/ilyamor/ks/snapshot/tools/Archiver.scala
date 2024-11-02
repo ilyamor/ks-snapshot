@@ -1,7 +1,7 @@
 package io.ilyamor.ks.snapshot.tools
 
-import org.apache.commons.compress.archivers.tar.{ TarArchiveEntry, TarArchiveOutputStream }
-import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
+import com.github.luben.zstd.ZstdOutputStream
+import org.apache.commons.compress.archivers.tar.{TarArchiveEntry, TarArchiveOutputStream}
 import org.apache.commons.io.IOUtils
 import org.apache.logging.log4j.scala.Logging
 
@@ -17,7 +17,7 @@ case class Archiver(outputFile: File, sourceDir: File, position: File) extends L
       outputFile.createNewFile()
       val fos = new FileOutputStream(outputFile)
       val bos = new BufferedOutputStream(fos)
-      val gzos = new GzipCompressorOutputStream(bos)
+      val gzos = new ZstdOutputStream(bos)
       val tarOs = new TarArchiveOutputStream(gzos)
       tarOs.setLongFileMode(TarArchiveOutputStream.LONGFILE_POSIX)
       try {
